@@ -46,4 +46,28 @@ class AgentAPI {
           'Kiểm tra backend đang chạy và CORS đã bật.');
     }
   }
+
+  Future<String> speechToText(String filePath) async {
+    try {
+      final request =
+          http.MultipartRequest('POST', Uri.parse('$_apiBaseUrl/stt'));
+      request.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+      final streamedResponse =
+          await request.send().timeout(const Duration(seconds: 45));
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data.containsKey('error')) {
+          throw Exception(data['error']);
+        }
+        return data['text'] ?? '';
+      }
+      throw Exception('STT Server Error ${response.statusCode}');
+    } catch (e) {
+      debugPrint('AgentAPI speechToText error: $e');
+      throw Exception('Lỗi nhận diện giọng nói: $e');
+    }
+  }
 }
