@@ -1,0 +1,47 @@
+# Flutter / Dart
+**/build/
+**/.dart_tool/
+**/.packages
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+
+# Android
+**/.gradle/
+**/local.properties
+**/GeneratedPluginRegistrant.java
+
+# iOS
+**/Pods/
+**/GeneratedPluginRegistrant.h
+**/GeneratedPluginRegistrant.m
+
+# Windows / Linux / macOS ephemeral
+**/flutter/ephemeral/
+**/generated_plugin_registrant.h
+**/generated_plugin_registrant.cc
+**/generated_plugins.cmake
+
+# C++ / Build artifacts
+**/*.pdb
+**/*.ilk
+**/*.exp
+**/*.lib
+**/*.obj
+**/*.exe
+**/*.dll
+
+# Python
+**/__pycache__/
+**/*.py[cod]
+**/*.pyo
+**/.venv/
+**/venv/
+**/.env
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+push_output.txt
