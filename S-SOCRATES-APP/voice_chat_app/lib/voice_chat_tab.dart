@@ -1,8 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 
 import 'mic_glow.dart';
 import 'services/agent_api.dart';
@@ -35,7 +33,7 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   String _liveTranscript = '';
   String? _errorMessage;
 
-  int _retryCount = 0;
+  final int _retryCount = 0;
   DateTime? _sessionStartTime;
   static const int _maxRetries = 3;
 
@@ -164,7 +162,7 @@ class _VoiceChatTabState extends State<VoiceChatTab>
     return 'Có lỗi khi gửi tin nhắn.';
   }
 
-  Future<void> _startSession({bool isRetry = false}) async {
+  Future<void> _startSession() async {
     if (_isLoading || _isSpeakingTTS || _isTranscribing) return;
 
     if (!_voiceSupported) {
