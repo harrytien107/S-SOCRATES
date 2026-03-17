@@ -367,10 +367,19 @@ class _VoiceChatTabState extends State<VoiceChatTab>
 
   Future<void> _stopSession() async {
     debugPrint('STT: manual stop');
-    _activeSessionId = null;
+    // If not listening or starting, reset sid just in case it got stuck
+    if (!_isListening && !_isVoiceStarting) {
+      _activeSessionId = null;
+    }
+    
+    // Don't clear _activeSessionId yet if we are listening, 
+    // let _onStatus -> _handleStop process the final transcript.
     try {
       await _speech.stop();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('STT: stop error: $e');
+      _activeSessionId = null; // Force clear on error
+    }
     if (!mounted) return;
     setState(() {
       _isVoiceStarting = false;
@@ -380,8 +389,9 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   }
 
   Future<void> _toggleMic() async {
-    if (_isLoading || _isVoiceStarting) return;
-    if (_isListening || _activeSessionId != null) {
+    if (_isLoading) return;
+    // More robust toggle: if UI says we are listening or starting, stop it.
+    if (_isListening || _isVoiceStarting || _activeSessionId != null) {
       await _stopSession();
       return;
     }
