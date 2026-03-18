@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -32,6 +33,11 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   int? _activeSessionId;
   String _liveTranscript = '';
   String? _errorMessage;
+
+  StreamSubscription<Amplitude>? _amplitudeSub;
+  Timer? _silenceTimer;
+  static const double _silenceThreshold = -40.0; // dB
+  static const int _silenceDurationMs = 2000;   // 2 seconds of silence
 
   final int _retryCount = 0;
   DateTime? _sessionStartTime;
@@ -105,6 +111,8 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   @override
   void dispose() {
     _scroll.dispose();
+    _amplitudeSub?.cancel();
+    _silenceTimer?.cancel();
     _recorder.dispose();
     super.dispose();
   }
@@ -198,6 +206,22 @@ class _VoiceChatTabState extends State<VoiceChatTab>
       await _recorder.start(config, path: path);
 
       if (!mounted || !_isActive(sid)) return;
+      
+      // Bắt đầu theo dõi cường độ âm thanh để tự động dừng (VAD)
+      _amplitudeSub = _recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen((amp) {
+        if (amp.current < _silenceThreshold) {
+          _silenceTimer ??= Timer(const Duration(milliseconds: _silenceDurationMs), () {
+            if (mounted && _isListening && _isActive(sid)) {
+              debugPrint('VAD: Silence detected, auto-stopping...');
+              _stopSession();
+            }
+          });
+        } else {
+          _silenceTimer?.cancel();
+          _silenceTimer = null;
+        }
+      });
+
       setState(() {
         _isVoiceStarting = false;
         _isListening = true;
@@ -221,6 +245,11 @@ class _VoiceChatTabState extends State<VoiceChatTab>
     final sid = _activeSessionId;
     _activeSessionId = null;
     
+    _amplitudeSub?.cancel();
+    _amplitudeSub = null;
+    _silenceTimer?.cancel();
+    _silenceTimer = null;
+
     if (sid == null) return;
 
     setState(() {
