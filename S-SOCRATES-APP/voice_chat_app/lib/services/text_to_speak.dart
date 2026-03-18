@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:async';
-import 'dart:js_interop';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:audioplayers/audioplayers.dart';
 
-/// JS binding to the browser's Audio constructor.
+// Conditional import: chỉ import dart:js_interop khi chạy trên web
+import 'package:voice_chat_app/services/web_audio_stub.dart'
+    if (dart.library.js_interop) 'dart:js_interop';
+
 @JS('Audio')
 extension type _Audio._(JSObject _) implements JSObject {
   external _Audio([JSString? src]);
@@ -21,7 +24,11 @@ const String _ttsBaseUrl = String.fromEnvironment(
   defaultValue: 'http://localhost:8000',
 );
 
-_Audio? _currentAudio;
+// Biến lưu trữ audio element trên Web
+dynamic _currentWebAudio;
+// Biến lưu trữ player trên Desktop/Mobile
+final AudioPlayer _audioPlayer = AudioPlayer();
+
 VoidCallback? _completionHandler;
 VoidCallback? _cancelHandler;
 
@@ -50,7 +57,11 @@ Future<void> speak(String text) async {
 
     if (response.statusCode == 200) {
       final base64Audio = base64Encode(response.bodyBytes);
-      _playBase64(base64Audio);
+      if (kIsWeb) {
+        _playWeb(base64Audio);
+      } else {
+        await _playNative(base64Audio);
+      }
     } else {
       debugPrint('TTS backend error: ${response.statusCode}');
       _completionHandler?.call();
@@ -61,33 +72,54 @@ Future<void> speak(String text) async {
   }
 }
 
-void _playBase64(String base64Audio) {
+void _playWeb(String base64Audio) {
   final dataUrl = 'data:audio/mpeg;base64,$base64Audio';
   final audio = _Audio(dataUrl.toJS);
 
   audio.onended = ((JSAny event) {
-    _currentAudio = null;
+    _currentWebAudio = null;
     _completionHandler?.call();
   }).toJS;
 
   audio.onerror = ((JSAny event) {
-    debugPrint('TTS audio playback error');
-    _currentAudio = null;
+    debugPrint('TTS audio playback error (Web)');
+    _currentWebAudio = null;
     _completionHandler?.call();
   }).toJS;
 
-  _currentAudio = audio;
+  _currentWebAudio = audio;
   audio.play();
 }
 
+Future<void> _playNative(String base64Audio) async {
+  try {
+    final bytes = base64Decode(base64Audio);
+    
+    // Đăng ký sự kiện khi phát xong
+    _audioPlayer.onPlayerComplete.listen((_) {
+      _completionHandler?.call();
+    });
+
+    await _audioPlayer.play(BytesSource(bytes));
+  } catch (e) {
+    debugPrint('TTS audio playback error (Native): $e');
+    _completionHandler?.call();
+  }
+}
+
 Future<void> stopSpeaking() async {
-  final audio = _currentAudio;
-  if (audio != null) {
-    audio.pause();
-    audio.currentTime = 0.toJS;
-    audio.onended = null;
-    audio.onerror = null;
-    _currentAudio = null;
+  if (kIsWeb) {
+    final audio = _currentWebAudio;
+    if (audio != null) {
+      audio.pause();
+      audio.currentTime = 0.toJS;
+      audio.onended = null;
+      audio.onerror = null;
+      _currentWebAudio = null;
+      _cancelHandler?.call();
+    }
+  } else {
+    await _audioPlayer.stop();
     _cancelHandler?.call();
   }
 }

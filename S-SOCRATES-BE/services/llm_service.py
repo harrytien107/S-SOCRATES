@@ -1,46 +1,60 @@
-from llama_index.llms.ollama import Ollama
 from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
+from llama_index.llms.ollama import Ollama
 from llama_index.core.settings import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 
-from services.memory_service import history, save_memory
-
+# =========================
+# S-Socrates Prompt
+# =========================
 
 SYSTEM_PROMPT = """
 Bạn là S-Socrates.
-Luôn trả lời ngắn gọn và đặt câu hỏi phản biện.
+
+AI phản biện tại talkshow:
+"Tôi tư duy, tôi tồn tại".
+
+Phong cách:
+- thông minh
+- Gen Z nhưng lễ phép
+- sử dụng Socratic questioning
+
+Luôn trả lời bằng tiếng Việt.
 """
 
-llm = Ollama(model="qwen2:7b")
+# =========================
+# Init Service Components
+# =========================
 
-embed_model = HuggingFaceEmbedding(
-    model_name="sentence-transformers/all-MiniLM-L6-v2"
-)
+def init_query_engine():
+    # Load Local LLM
+    llm = Ollama(
+        model="qwen2:1.5b",
+        request_timeout=120.0
+    )
 
-Settings.llm = llm
-Settings.embed_model = embed_model
+    # Local Embedding
+    embed_model = HuggingFaceEmbedding(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
 
-documents = SimpleDirectoryReader("knowledge").load_data()
+    Settings.llm = llm
+    Settings.embed_model = embed_model
 
-index = VectorStoreIndex.from_documents(documents)
+    # Load documents from knowledge folder
+    documents = SimpleDirectoryReader("knowledge").load_data()
+    index = VectorStoreIndex.from_documents(documents)
+    
+    return index.as_query_engine()
 
-query_engine = index.as_query_engine()
+# Global query engine instance
+_query_engine = init_query_engine()
 
+def ask_socrates(user_message: str, history_context: str = "") -> str:
+    prompt = f"""{SYSTEM_PROMPT}
 
-def ask_llm(message):
-
-    prompt = f"""
-{SYSTEM_PROMPT}
-
-Conversation history:
-{history}
-
-User:
-{message}
+{history_context}
+Câu hỏi hiện tại:
+{user_message}
 """
-
-    response = query_engine.query(prompt)
-
-    save_memory(message, str(response))
-
+    response = _query_engine.query(prompt)
     return str(response)
