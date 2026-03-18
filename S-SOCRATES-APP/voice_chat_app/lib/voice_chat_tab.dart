@@ -296,8 +296,9 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   }
 
   Future<void> _toggleMic() async {
-    if (_isLoading || _isVoiceStarting) return;
-    if (_isListening || _activeSessionId != null) {
+    if (_isLoading) return;
+    // More robust toggle: if UI says we are listening or starting, stop it.
+    if (_isListening || _isVoiceStarting || _activeSessionId != null) {
       await _stopSession();
       return;
     }
