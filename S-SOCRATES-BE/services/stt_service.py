@@ -3,7 +3,7 @@ import shutil
 import time
 
 from fastapi import UploadFile
-from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel, download_model
 
 # =========================
 # Init Whisper STT Component
@@ -11,8 +11,18 @@ from faster_whisper import WhisperModel
 
 def init_stt_model():
     # Sử dụng Whisper bản 'base' chạy trên CPU để tối ưu RAM (compute_type='int8')
-    print("Initializing Whisper Model...")
-    return WhisperModel("base", device="cpu", compute_type="int8")
+    print("Initializing Whisper Model offline...")
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    
+    try:
+        # Gọi trực tiếp bộ tải thông báo local_files_only=True để chặn 100% Internet
+        model_path = download_model("base", local_files_only=True)
+        return WhisperModel(model_path, device="cpu", compute_type="int8")
+    except Exception:
+        # Nếu bị lỗi (do chưa tải lần nào), tự động bật tải mạng
+        print("Đang tải model Whisper lần đầu (Chỉ một lần duy nhất)...")
+        model_path = download_model("base", local_files_only=False)
+        return WhisperModel(model_path, device="cpu", compute_type="int8")
 
 _stt_model = init_stt_model()
 
