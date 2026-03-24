@@ -16,29 +16,24 @@ Chào mừng đến với **S-Socrates**, một trợ lý AI thông minh đượ
 ## 🏗️ Kiến trúc Hệ thống (System Architecture)
 
 ```text
-Flutter App (S-SOCRATES-APP)
+S-SOCRATES-Vo (Desktop App - All in Python)
      │
-     │ 1. API: Voice/Text Request  
-     │ 2. API: Audio Stream Response
-     ▼
-FastAPI Backend (S-SOCRATES-BE)
-     │
-     ├─ [STT Service] Faster-Whisper (Nhận diện giọng nói)
+     ├─ [STT Service] Deepgram REST API (Nhận diện giọng nói)
      ├─ [Memory Service] Lưu trữ ngữ cảnh hội thoại
      ├─ [LLM & RAG Service] LlamaIndex + Ollama (Xử lý tư duy)
-     └─ [TTS Service] Edge-TTS (Phát sinh âm thanh phản hồi)
+     └─ [TTS Service] Google Cloud Chirp 3 HD (Phát sinh âm thanh)
 ```
 
 ---
 
 ## 🚀 Hướng dẫn Cài đặt & Khởi chạy
 
-Để chạy toàn bộ hệ thống, bạn cần 3 Terminal riêng biệt: (1) Ollama, (2) Backend, (3) Frontend.
+Để chạy toàn bộ hệ thống, bạn cần 2 Terminal riêng biệt: (1) Ollama, (2) Python Desktop App.
 
 ### Yêu cầu hệ thống (Prerequisites)
 - **Python** (>= 3.10)
-- **Flutter SDK** (>= 3.x.x)
 - **Ollama** (Client `ollama` cài đặt trên máy)
+- Tài khoản và API Keys cho **Deepgram** (STT) và **Google Cloud** (TTS)
 
 ---
 
@@ -56,41 +51,32 @@ ollama serve
 
 ---
 
-### Bước 2: Khởi động Backend (Python FastAPI)
+### Bước 2: Cài đặt biến môi trường (API Keys)
+
+Tạo một file `.env` trong thư mục gốc của dự án `S-SOCRATES-Vo` (bạn có thể copy từ file `.env.example`) và điền thông tin:
+
+```env
+DEEPGRAM_API_KEY=your_deepgram_api_key_here
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/your/google-credentials.json
+```
+
+---
+
+### Bước 3: Khởi động Ứng dụng Desktop (PyQt6)
 
 Mở **Terminal 2**:
 ```powershell
-# Chuyển vào thư mục Backend
-cd S-SOCRATES-BE
-
-# Cài đặt môi trường ảo (Tuỳ chọn)
+# Cài đặt môi trường ảo (Khuyên dùng)
 python -m venv .venv
 .\.venv\Scripts\activate
 
 # Cài đặt các thư viện (Chỉ lần đầu)
 pip install -r requirements.txt
 
-# Khởi động Backend Server
-uvicorn main:app --reload --port 8000
+# Khởi chạy giao diện Desktop
+python main.py
 ```
-Backend sẽ khởi chạy tại: `http://localhost:8000`. Khi bạn thấy log báo *"Application startup complete"* là thành công.
-
----
-
-### Bước 3: Khởi động Giao diện Cửa sổ (Flutter App)
-
-Mở **Terminal 3**:
-```powershell
-# Chuyển vào thư mục Flutter App
-cd S-SOCRATES-APP\voice_chat_app
-
-# Lấy các thư viện UI (Chỉ lần đầu)
-flutter pub get
-
-# Chạy App với giao diện Desktop Windows
-flutter run -d windows
-```
-*(Hoặc nếu bạn muốn thử nghiệm giao diện Web: `flutter run -d chrome`)*
+*(Giao diện S-Socrates Desktop App sẽ hiện lên)*
 
 ---
 

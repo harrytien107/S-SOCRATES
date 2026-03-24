@@ -152,3 +152,7 @@ cython_debug/
 
 # VS Code
 .vscode/
+
+# API Keys & Secrets
+**/.env
+**/*.json
