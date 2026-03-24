@@ -1,8 +1,8 @@
 import os
-import asyncio
-import edge_tts
 from PyQt6.QtCore import QThread, pyqtSignal
 from utils.logger import log
+from services.tts_service import generate_speech_file
+
 
 class TTSWorker(QThread):
     progress_signal = pyqtSignal(str)
@@ -16,14 +16,10 @@ class TTSWorker(QThread):
     def run(self):
         try:
             log.info("Chạy quy trình TTS (Admin Manual)...")
-            self.progress_signal.emit("🔊 Đang nạp tiếng nói (TTS) từ đáp án mẫu...")
-            tts_file = os.path.abspath("temp_admin_reply.mp3") 
+            self.progress_signal.emit("🔊 Đang nạp tiếng nói (Google Chirp 3 HD) từ đáp án mẫu...")
+            tts_file = os.path.abspath("voice/temp_admin_reply.mp3")
             
-            async def generate_speech():
-                communicate = edge_tts.Communicate(self.text_to_speak, "vi-VN-HoaiMyNeural")
-                await communicate.save(tts_file)
-                
-            asyncio.run(generate_speech())
+            generate_speech_file(self.text_to_speak, tts_file)
             
             log.info("Phát tín hiệu Play Audio về giao diện Admin UI.")
             self.play_audio_signal.emit(tts_file)

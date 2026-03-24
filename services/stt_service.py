@@ -1,43 +1,47 @@
 import os
-import shutil
-import time
-
-from fastapi import UploadFile
-from faster_whisper import WhisperModel
+import httpx
+from utils.logger import log
 
 # =========================
-# Init Whisper STT Component
+# Deepgram STT Service (REST API)
 # =========================
 
-def init_stt_model():
-    # Sử dụng Whisper bản 'base' chạy trên CPU để tối ưu RAM (compute_type='int8')
-    print("Initializing Whisper Model...")
-    return WhisperModel("base", device="cpu", compute_type="int8")
+DEEPGRAM_API_URL = "https://api.deepgram.com/v1/listen"
 
-_stt_model = init_stt_model()
 
-# Đảm bảo thư mục voice luôn tồn tại
-VOICE_DIR = "voice"
-os.makedirs(VOICE_DIR, exist_ok=True)
+def get_deepgram_api_key() -> str:
+    api_key = os.getenv("DEEPGRAM_API_KEY")
+    if not api_key:
+        raise Exception("DEEPGRAM_API_KEY is not set in .env")
+    return api_key
 
-async def transcribe_audio(file: UploadFile) -> str:
-    # Đặt tên file kèm thời gian để tránh trùng lặp và lưu trữ
-    timestamp = int(time.time() * 1000)
-    file_path = os.path.join(VOICE_DIR, f"voice_{timestamp}.m4a")
-    
-    try:
-        # Lưu thẳng file vào thư mục voice thay vì làm file tạm
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-            
-        # Gọi model Whisper để dịch file tiếng Việt
-        segments, info = _stt_model.transcribe(file_path, beam_size=5, language="vi")
-        text = "".join([segment.text for segment in segments])
-        return text.strip()
-    except Exception as e:
-        raise e
-    finally:
-        # Xóa file sau khi dịch xong để không bừa bộn ổ cứng
-        if os.path.exists(file_path):
-            os.remove(file_path)
 
+def transcribe_file(wav_path: str) -> str:
+    """
+    Đọc file WAV từ disk, gửi lên Deepgram REST API, trả về transcript.
+    Dùng cho desktop app (ghi âm bằng sounddevice → lưu WAV → gọi hàm này).
+    """
+    api_key = get_deepgram_api_key()
+
+    url = f"{DEEPGRAM_API_URL}?model=nova-2&language=vi&smart_format=true"
+    headers = {
+        "Authorization": f"Token {api_key}",
+        "Content-Type": "audio/wav",
+    }
+
+    log.info(f"Gửi file audio tới Deepgram API: {wav_path}")
+
+    with open(wav_path, "rb") as audio_file:
+        audio_data = audio_file.read()
+
+    # Sử dụng httpx synchronous client (vì chạy trong QThread, không cần async)
+    with httpx.Client(timeout=120.0) as client:
+        response = client.post(url, headers=headers, content=audio_data)
+        response.raise_for_status()
+
+        data = response.json()
+        text = data["results"]["channels"][0]["alternatives"][0]["transcript"]
+        result = text.strip()
+
+    log.info(f"Deepgram STT result: '{result}'")
+    return result

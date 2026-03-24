@@ -4,14 +4,13 @@ import tempfile
 import wave
 import numpy as np
 import sounddevice as sd
-import asyncio
-import edge_tts
 
 from utils.logger import log
 
-from services.stt_service import _stt_model
+from services.stt_service import transcribe_file
 from services.llm_service import ask_socrates
 from services.memory_service import memory_service
+from services.tts_service import generate_speech_file
 
 from PyQt6.QtCore import QThread, pyqtSignal
 
@@ -68,7 +67,7 @@ class AIVoiceWorker(QThread):
                             if silence_start is None:
                                 silence_start = time.time()
                             elif time.time() - silence_start > SILENCE_DURATION:
-                                log.info("Phát hiện kết thúc câu nói (im lặng 2s). Tự động cắt ghi âm!")
+                                log.info("Phát hiện kết thúc câu nói (im lặng 1s). Tự động cắt ghi âm!")
                                 self.is_recording = False
                                 break
                                 
@@ -87,20 +86,19 @@ class AIVoiceWorker(QThread):
                 wf.writeframes(myrecording.tobytes())
             log.debug(f"Đã lưu cache audio tạm thời tại {temp_wav}")
                 
-            # --- 2. THỰC THI STT (Whisper) ---
-            log.info("Khởi chạy module Faster Whisper STT...")
+            # --- 2. THỰC THI STT (Deepgram REST API) ---
+            log.info("Khởi chạy Deepgram STT...")
             stt_start = time.time()
-            segments, info = _stt_model.transcribe(temp_wav, beam_size=5, language="vi")
-            text = "".join([segment.text for segment in segments]).strip()
+            text = transcribe_file(temp_wav)
             
             if os.path.exists(temp_wav):
                 os.remove(temp_wav)
                 
             stt_time = (time.time() - stt_start) * 1000
-            log.info(f"Kết quả Whisper: '{text}' (thời gian: {stt_time:.0f}ms)")
+            log.info(f"Kết quả Deepgram: '{text}' (thời gian: {stt_time:.0f}ms)")
             
             if not text:
-                log.warning("Audio trống hoặc Whisper không nhận dạng được phụ âm.")
+                log.warning("Audio trống hoặc Deepgram không nhận dạng được.")
                 self.progress_signal.emit("❌ Không nghe rõ âm thanh, hãy bấm nói lại lần nữa nhé!")
                 self.finished_signal.emit("")
                 return
@@ -132,20 +130,16 @@ class AIVoiceWorker(QThread):
                 llm_time = (time.time() - llm_start) * 1000
                 log.info(f"Kết quả LLM: '{response}' (Thời gian chạy Qwen2: {llm_time:.0f}ms)")
                 
-            # Mới lồng thêm: Lưu đoạn hội thoại vào memory dù là AI tự phịa hay dùng Kịch bản mẫu
+            # Lưu đoạn hội thoại vào memory
             memory_service.save(text, response)
             
-            # --- 4. THỰC THI TTS (Edge-TTS) ---
-            log.info("Chạy quy trình TTS (Text To Speech)...")
+            # --- 4. THỰC THI TTS (Google Chirp 3 HD) ---
+            log.info("Chạy quy trình TTS (Google Cloud Chirp 3 HD)...")
             tts_start = time.time()
             
             tts_file = os.path.abspath("voice/temp_reply.mp3")
+            generate_speech_file(response, tts_file)
             
-            async def generate_speech():
-                communicate = edge_tts.Communicate(response, "vi-VN-HoaiMyNeural")
-                await communicate.save(tts_file)
-                
-            asyncio.run(generate_speech())
             tts_time = (time.time() - tts_start) * 1000
             log.info(f"TTS Engine đã ghi file thành công tại {tts_file} (thời gian: {tts_time:.0f}ms)")
             
