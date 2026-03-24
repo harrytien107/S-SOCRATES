@@ -1,4 +1,6 @@
 import sys
+
+import torch
 from PyQt6.QtWidgets import QApplication
 from utils.logger import log
 from ui.main_window import TestVoiceUI

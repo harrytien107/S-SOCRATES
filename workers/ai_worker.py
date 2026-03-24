@@ -107,21 +107,33 @@ class AIVoiceWorker(QThread):
                 
             self.progress_signal.emit(f"🧑 Bạn: {text}")
             
-            # --- 3. THỰC THI LLM (Qwen2/Llama Index) ---
-            log.info("Truyền câu nói vào LLM S-Socrates (Qwen2) kèm lịch sử...")
+            # --- 3. THỰC THI SEMANTIC ROUTER HOẶC LLM (Qwen2) ---
+            from services.semantic_router import semantic_router
+            
+            log.info("Kiểm tra sự trùng khớp với bộ script Câu hỏi mẫu (Semantic Router)...")
+            semantic_router.reload_presets() # Load data mới nhỡ Admin thêm
+            
             llm_start = time.time()
+            preset_answer = semantic_router.get_best_match(text, threshold=0.75)
             
-            # Load memory history
-            history = memory_service.get_context_string()
-            
-            # Gọi LLM
-            response = ask_socrates(text, history)
-            
-            # Lưu hội thoại vào memory
+            if preset_answer:
+                response = preset_answer
+                llm_time = (time.time() - llm_start) * 1000
+                log.info(f"Đã bắt trúng kịch bản! Dùng đáp án mẫu. (Thời gian match Vector: {llm_time:.0f}ms)")
+            else:
+                log.info("Truyền câu nói vào LLM S-Socrates (Qwen2) kèm lịch sử...")
+                
+                # Load memory history
+                history = memory_service.get_context_string()
+                
+                # Gọi LLM
+                response = ask_socrates(text, history)
+                
+                llm_time = (time.time() - llm_start) * 1000
+                log.info(f"Kết quả LLM: '{response}' (Thời gian chạy Qwen2: {llm_time:.0f}ms)")
+                
+            # Mới lồng thêm: Lưu đoạn hội thoại vào memory dù là AI tự phịa hay dùng Kịch bản mẫu
             memory_service.save(text, response)
-            
-            llm_time = (time.time() - llm_start) * 1000
-            log.info(f"Kết quả LLM: '{response}' (thời gian: {llm_time:.0f}ms)")
             
             # --- 4. THỰC THI TTS (Edge-TTS) ---
             log.info("Chạy quy trình TTS (Text To Speech)...")
