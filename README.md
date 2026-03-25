@@ -1,95 +1,117 @@
-# S-Socrates AI – Chiến Thần Phản Biện UTH
+# 🤖 S-SOCRATES AI ASSISTANT
 
-Chào mừng đến với **S-Socrates**, một trợ lý AI thông minh được thiết kế đặc biệt cho talkshow *"Tôi tư duy, tôi tồn tại"*. Lấy cảm hứng từ triết gia Socrates, AI này không chỉ trả lời câu hỏi mà còn sử dụng phương pháp **Socratic Questioning** (đặt câu hỏi ngược lại) để kích thích tư duy người dùng.
+<!-- ![S-Socrates](assets/ssocrates_logo.png) -->
 
-## 🌟 Chức năng nổi bật
+> **Hệ thống Trợ lý Ảo Không Gian 3D tích hợp AI Đa Phương Thức.**
+> *(Speech-To-Text Trực Tiếp → Suy Luận Ngữ Nghĩa → Text-To-Speech → Tư thế 3D Tự Động)*
 
-- 🎙️ **Giao tiếp bằng giọng nói (Voice Chat):** Tích hợp Whisper AI để nhận diện tiếng Việt cực chuẩn và Edge-TTS để trả lời bằng giọng nói tự nhiên.
-- 🛑 **Tự động bắt nhịp (VAD):** Hệ thống tự động nhận diện khoảng lặng (silence) để biết khi nào bạn đã nói xong và lập tức phản hồi mà không cần chạm tay.
-- 🧠 **Trí nhớ ngữ cảnh (Memory Context):** S-Socrates có thể nhớ lại các diễn biến trước đó trong cuộc trò chuyện để đưa ra câu trả lời liền mạch, logic.
-- 📚 **Kiến thức RAG (Retrieval-Augmented Generation):** AI có khả năng nhúng kiến thức từ tài liệu (ví dụ: về trường ĐH Giao thông vận tải TP.HCM - UTH) để cung cấp thông tin chính xác.
-- 🖥️ **Giao diện đa nền tảng:** Hỗ trợ chạy mượt mà trên **Windows Desktop** và **Web Browser** thông qua Flutter.
-- ⚡ **Local LLM & Offline Ready:** Sử dụng Ollama (Qwen2 1.5b) chạy trực tiếp trên máy, bảo mật 100% dữ liệu.
+Chào mừng đến với **S-Socrates**, một trợ lý AI thông minh được thiết kế đặc biệt cho talkshow *"Tôi tư duy, tôi tồn tại"*. Lấy cảm hứng từ triết gia Socrates, AI này sử dụng phương pháp **Socratic Questioning** (đặt câu hỏi ngược lại) kết hợp với **Không gian 3D tương tác** để kích thích tư duy người dùng.
 
 ---
 
-## 🏗️ Kiến trúc Hệ thống (System Architecture)
+## 🌟 Chức Năng Nổi Bật
+
+1. **Giao Diện Không Gian 3D (Three.js & PyQt6 WebEngine):**
+   * **Auto Framing:** Tự động quét Box3 để phóng to / căn góc camera chiếu thẳng vào mặt bất kỳ kích thước Model 3D (`.glb`) nào.
+   * **Lip-Sync (Nhép môi thời gian thực):** Đồng bộ hóa biên độ âm thanh (Audio Frequency) với Morph Targets (Blendshapes) hoặc Xương hàm (Jaw Bone) để nhân vật nhép môi chính xác theo từng âm tiết.
+   * **Procedural Animation (Cử chỉ thông minh):** Nhân vật tự động thở, ngó nghiêng lúc im lặng và tự gật gù, quạt tay diễn thuyết cường độ cao khi lên giọng.
+
+2. **Giao Tiếp Giọng Nói (Voice Chat) Siêu Mượt:**
+   * **Thu âm chống ồn:** Ghi âm linh hoạt qua mảng Microphone cục bộ kết hợp **VAD (Voice Activity Detection)** để tự ngắt bản ghi khi bạn ngừng nói 2 giây.
+   * **Tai Siêu Nhạy (Deepgram STT):** Gửi luồng âm thanh lên Deepgram REST API để dịch sang văn bản tiếng Việt cực chuẩn với độ trễ <1s.
+   * **Phát Âm Cảm Xúc (Google Cloud):** Sử dụng Model cao cấp **Chirp 3 HD** từ Google Text-to-Speech đem lại giọng mượt như người thật.
+
+3. **Bộ Não Định Tuyến Nhanh (Semantic Router):**
+   * Áp dụng `sentence-transformers` (all-MiniLM-L6-v2) để tính **Cosine Similarity**.
+   * Hệ thống sẽ tự quét câu hỏi của User với Bộ đề rập khuôn. Nếu giống nhau >75%, AI sẽ nhả luôn kịch bản đáp án vạch sẵn (Zero Delay), nếu không giống sẽ cầu cứu LLM suy luận.
+
+4. **Ký Ức Tâm Lý Học Mồi (Few-Shot Anchoring):**
+   * Giữ vĩnh viễn **15 cuộc hội thoại mồi** về Kinh tế, Chính trị, UAV (Tạo lập Persona Giáo sư) đan xen cùng **6 vòng lặp hội thoại mới nhất** (Trí nhớ ngắn hạn). Giúp AI không bị tràn RAM nhưng không bao giờ quên "Bản tính gốc".
+
+5. **Bảng Điều Khiển Wizard of Oz (Dành cho Admin):**
+   * Một cửa sổ bí mật giúp kỹ thuật viên / đạo diễn ấn nút phát câu trả lời cài cắm sẵn từ xa mà Speaker / Người dự thi không hề hay biết!
+
+---
+
+## 🏗️ Kiến Trúc Thư Mục (Directory Structure)
 
 ```text
-S-SOCRATES-Vo (Desktop App - All in Python)
-     │
-     ├─ [STT Service] Deepgram REST API (Nhận diện giọng nói)
-     ├─ [Memory Service] Lưu trữ ngữ cảnh hội thoại
-     ├─ [LLM & RAG Service] LlamaIndex + Ollama (Xử lý tư duy)
-     └─ [TTS Service] Google Cloud Chirp 3 HD (Phát sinh âm thanh)
+S-SOCRATES/
+│   main.py               # Lệnh khởi chạy trọng tâm của App User
+│   admin.py              # Chương trình Bảng Cầm Trịch Ẩn (Dành cho Đạo diễn)
+│   config.py             # Nút biến môi trường và thiết lập tham số LOG
+│   memory.json           # Dữ liệu "Tâm lý học mồi" định hình nhân cách (Ký ức)
+│   qa_presets.json       # Kho tàng các câu hỏi-đáp dựng sẵn dùng cho Định tuyến
+│   requirements.txt      # Bảng khai báo Dependency
+│   .env                  # Nơi chứa API Keys quan trọng
+│
+├── ui/                   # CHỨA GIAO DIỆN (FRONTEND)
+│   ├── main_window.py      # Cửa sổ Người dùng (Khung 3D, thanh ghi âm, text chat)
+│   └── admin_window.py     # Cửa sổ Quản trị (Nút bấm bí mật điều khiển)
+│
+├── workers/              # MULTITHREADING (Ngăn chặn UI bị treo cứng)
+│   ├── ai_worker.py        # Luồng chính (Nhận Voice, dịch, ném qua Router/LLM)
+│   └── tts_worker.py       # Luồng song song (Biến Text thô thành mp3 Audio siêu tốc)
+│
+├── services/             # LÕI CÔNG NGHỆ CHUYÊN SÂU (MỖI FILE ĐẢM NHẬN 1 VIỆC)
+│   ├── stt_service.py      # Module gọi Deepgram API (Speech-To-Text)
+│   ├── tts_service.py      # Module gọi Google Cloud API (Text-To-Speech)
+│   ├── llm_service.py      # Module Langchain gọi Ollama / LLM cục bộ
+│   ├── semantic_router.py  # Thuật toán tính độ giống nhau của Vector
+│   └── memory_service.py   # Quản lý file JSON, chèn mồi (Few-Shot Anchoring) & Backup lỗi
+│
+└── assets/               # KHO CHỨA ĐỒ HỌA & MÔ HÌNH
+    ├── avatar.html         # Trình duyệt nhúng Three.js. Mã Toán học Xương/Cơ nằm tại đây.
+    └── arknights...glb     # Mô hình 3D mặc định
 ```
 
 ---
 
-## 🚀 Hướng dẫn Cài đặt & Khởi chạy
+## 🚀 Hướng Dẫn Cài Đặt (Installation)
 
-Để chạy toàn bộ hệ thống, bạn cần 2 Terminal riêng biệt: (1) Ollama, (2) Python Desktop App.
+### 1. Chuẩn bị môi trường & API Keys
+Cài đặt **Python 3.10+** (Gợi ý dùng môi trường ảo `.venv`).
 
-### Yêu cầu hệ thống (Prerequisites)
-- **Python** (>= 3.10)
-- **Ollama** (Client `ollama` cài đặt trên máy)
-- Tài khoản và API Keys cho **Deepgram** (STT) và **Google Cloud** (TTS)
+Tạo một tệp `.env` kế bên `main.py` để chứa hai thẻ sinh mạng:
+```ini
+DEEPGRAM_API_KEY=your_deepgram_api_key_xxxxxxxxxx
+GOOGLE_APPLICATION_CREDENTIALS="C:\Users\Your_Name\path_to_google_key.json"
+```
 
----
+### 2. Cài đặt thư viện (Dependencies)
+```bash
+python -m venv venv
+.\venv\Scripts\activate
+pip install -r requirements.txt
+```
+*(Nếu cài đặt `PyQt6-WebEngine` gặp khó, đảm bảo pip của bạn là bản cập nhật mới nhất).*
 
-### Bước 1: Khởi động Lõi Trí tuệ (Ollama)
-
-Mở **Terminal 1**:
-```powershell
-# Tải model Qwen2 bản nhẹ (chỉ cần chạy lần đầu, tốn ~1GB RAM)
+### 3. Tải Ollama Lõi Tư Duy (Tùy chọn)
+Nếu bạn vẫn sử dụng cục LLM nội bộ: Mở một Terminal riêng và chạy Server não AI.
+```bash
 ollama pull qwen2:1.5b
-
-# Khởi động server Ollama
 ollama serve
 ```
-*(Giữ Terminal này luôn mở để AI có "não" suy nghĩ).*
 
 ---
 
-### Bước 2: Cài đặt biến môi trường (API Keys)
+## 🎮 Hướng Dẫn Sử Dụng (Usage)
 
-Tạo một file `.env` trong thư mục gốc của dự án `S-SOCRATES-Vo` (bạn có thể copy từ file `.env.example`) và điền thông tin:
-
-```env
-DEEPGRAM_API_KEY=your_deepgram_api_key_here
-GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/your/google-credentials.json
-```
-
----
-
-### Bước 3: Khởi động Ứng dụng Desktop (PyQt6)
-
-Mở **Terminal 2**:
-```powershell
-# Cài đặt môi trường ảo (Khuyên dùng)
-python -m venv .venv
-.\.venv\Scripts\activate
-
-# Cài đặt các thư viện (Chỉ lần đầu)
-pip install -r requirements.txt
-
-# Khởi chạy giao diện Desktop
+### 👨‍💻 Khởi chạy Màn Hình Người Dùng (Main Interface)
+```bash
 python main.py
 ```
-*(Giao diện S-Socrates Desktop App sẽ hiện lên)*
+- Ngay khi App mở lên, giao diện 3D Avatar sẽ xuất hiện. Trợ lý ảo tự động xoay cổ, nhấp nhô lồng ngực.
+- Dùng chuột Trái để Xoay, Chuột Phải chóp để dịch chuyển người, Con lăn chuột Zoom in/out cận cảnh mặt AI.
+- Nhấn **Nút Micro** để trò chuyện. Ngưng nói 2 giây hệ thống sẽ tự trả lời bám sát tư tưởng 15 câu mồi trong Memory.
+
+### 🎭 Khởi chạy Màn Hình Thế Lực Ngầm (Admin / Wizard)
+Mở một Terminal thứ hai và khởi chạy:
+```bash
+python admin.py
+```
+- Bạn sẽ có một bảng các nút xanh lam. Mỗi nút tương đương một câu trả lời trong `qa_presets.json`. Bấm vào và xem AI ở App người dùng tự há mồm nói theo kịch bản!
 
 ---
-
-## 🎯 Cách sử dụng
-
-1. **Text Chat (Tab Tin nhắn):** Bạn chỉ cần nhập văn bản vào và ấn gửi. S-Socrates sẽ trả lời cực kỳ sắc bén và hơi có chút "gen Z".
-2. **Voice Chat (Tab Giọng nói):** 
-   - Ấn vào biểu tượng Micro để gọi S-Socrates. 
-   - Khi vòng sáng hiện lên *"AI Voice đang lắng nghe"*, bạn hãy đưa ra câu hỏi.
-   - Khi bạn ngừng nói **2 giây**, hệ thống tự hiểu bạn đã nói xong (VAD) và sẽ tự nhận diện giọng nói -> Xử lý AI -> Phát âm thanh trả lời ra Loa.
-   - Cuộc gọi diễn ra liên tục, Rảnh tay hoàn toàn!
-
----
-
-**🎓 Phát triển tại: Đại học Giao thông vận tải TP.HCM (UTH)**  
-👤 *Hệ thống đang được phát triển hỗ trợ cho dự án Talkshow Phản biện.*
+> 🎓 **Phát triển tại:** Đại học Giao thông vận tải TP.HCM (UTH)
+> 🤖 **Tái cấu trúc mã nguồn toàn diện:** Bản V2 được dọn dẹp và phân luồng sạch sẽ toàn bộ Threading UI & Services Backend bởi Antigravity.

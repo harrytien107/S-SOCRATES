@@ -1,14 +1,19 @@
-fastapi>=0.100.0
-uvicorn>=0.23.0
-pydantic>=2.0.0
-python-multipart>=0.0.6
-httpx>=0.27.0
-python-dotenv>=1.0.0
-google-cloud-texttospeech>=2.16.0
-llama-index>=0.10.0
-llama-index-llms-ollama>=0.1.0
-llama-index-embeddings-huggingface>=0.1.0
-sentence-transformers>=2.2.2
-sounddevice>=0.4.0
-numpy>=1.24.0
+# Core UI & 3D Integration
 PyQt6>=6.5.0
+PyQt6-WebEngine>=6.5.0
+# Audio Recording & Processing
+sounddevice>=0.4.6
+numpy>=1.24.0
+scipy>=1.10.0
+# API Requests & Keys
+httpx>=0.25.0
+python-dotenv>=1.0.0
+# Deepgram Speech-To-Text (Optional SDK, but we used httpx REST manually)
+# deepgram-sdk>=3.0.0
+# Semantic Router & Embeddings
+sentence-transformers>=2.2.2
+# Text-To-Speech
+google-cloud-texttospeech>=2.14.1
+# LLM integration (Ollama wrapper)
+langchain>=0.1.0
+langchain-community>=0.0.10
