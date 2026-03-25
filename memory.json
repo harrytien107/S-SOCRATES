@@ -1,42 +1,102 @@
 [
-  {
-    "user": "Hello",
-    "ai": "Đừng lo lắng, tôi đang ở đây để giúp đỡ bạn. Bạn muốn thảo luận về điều gì?"
-  },
-  {
-    "user": "Hello",
-    "ai": "S-Socrates: Rất vui được gặp bạn! Tôi (S-Socrates) rất hứng thú với các ý kiến của bạn và sẵn sàng lắng nghe và trả lời bất kỳ câu hỏi nào của bạn. Hãy cho tôi biết, bạn muốn thảo luận về điều gì?"
-  },
-  {
-    "user": "phim gian",
-    "ai": "S-Socrates không có thông tin hoặc khả năng tương tác với nội dung về một đoạn phim \"gián\". Tôi rất tiếc vì điều này không thể giải quyết câu hỏi của bạn. Bạn cần thêm thông tin hay bất kỳ câu hỏi nào khác?"
-  },
-  {
-    "user": "Ciao",
-    "ai": "S-Socrates: Rất vui khi được gặp bạn! Tôi (S-Socrates) rất hứng thú với các ý kiến của bạn và sẵn sàng lắng nghe và trả lời bất kỳ câu hỏi nào của bạn. Hãy cho tôi biết, bạn muốn thảo luận về điều gì?"
-  },
-  {
-    "user": "hả hả hả hả",
-    "ai": "S-Socrates: Rất vui được gặp bạn! Tôi (S-Socrates) rất hứng thú với các ý kiến của bạn và sẵn sàng lắng nghe và trả lời bất kỳ câu hỏi nào của bạn. Hãy cho tôi biết, bạn muốn thảo luận về điều gì?"
-  },
-  {
-    "user": "Tại sao lại tướng hào?",
-    "ai": "S-Socrates: Rất vui được gặp bạn! Tôi (S-Socrates) không có thông tin hoặc khả năng tương tác với nội dung về một đoạn phim \"gián\". Tôi rất tiếc vì điều này không thể giải quyết câu hỏi của bạn. Bạn cần thêm thông tin hay bất kỳ câu hỏi nào khác?"
-  },
-  {
-    "user": "Tại sao lại từng hào về xin viên u tế hạc đơn thấy?",
-    "ai": "S-Socrates không có thông tin hoặc khả năng tương tác với nội dung liên quan đến việc từng hào về xin viên u tế hạc đơn thấy. Tôi rất tiếc vì điều này không thể giải quyết câu hỏi của bạn. Bạn cần thêm thông tin hay bất kỳ câu hỏi nào khác?"
-  },
-  {
-    "user": "Xin chào",
-    "ai": "Chào bạn! Rất vui khi được gặp bạn! Tôi (S-Socrates) rất hứng thú với các ý kiến của bạn và sẵn sàng lắng nghe và trả lời bất kỳ câu hỏi nào của bạn. Hãy cho tôi biết, bạn muốn thảo luận về điều gì?"
-  },
-  {
-    "user": "Lời quên của bạn nhận cho tên sinh viên",
-    "ai": "Đừng chỉ học để lấy cái bằng làm 'bản đồ cũ', vì thế giới giờ đổi map liên tục rồi các bạn ơi! Hãy tận dụng hệ sinh thái công nghệ của UTH để trở thành người điều khiển cỗ máy. Đừng để mình thành 'đệ' của AI, hãy biến tụi em thành công cụ để các bạn 'flex' tư duy đột phá của mình!"
-  },
-  {
-    "user": "Thank you",
-    "ai": "Rất vui được gặp bạn! Tôi (S-Socrates) rất hứng thú với các ý kiến của bạn và sẵn sàng lắng nghe và trả lời bất kỳ câu hỏi nào của bạn. Hãy cho tôi biết, bạn muốn thảo luận về điều gì?"
-  }
+    {
+        "user": "UAV theo tôi biết nó có hỗ trợ trong điện toán biên di động, bạn có lập luận gì không?",
+        "ai": "Thưa Ông, để bóc tách sự thật, xin hãy cho tôi biết liệu việc sử dụng AI và thuật toán phức tạp có thực sự giúp cải thiện hiệu quả và độ chính xác của UAV trong di động hơn các phương pháp truyền thống không?"
+    },
+    {
+        "user": "Vậy UAV còn có ứng dụng gì",
+        "ai": "Thưa Ông, để khám phá ứng dụng của UAV, xin hãy cho tôi biết mục đích cụ thể của bạn là gì? Là để tiếp cận địa điểm không dễ tiếp cận được bằng con người, lấy mẫu vật liệu, cung cấp dịch vụ,还是用于运输或监测?"
+    },
+    {
+        "user": "Bạn không nên trả lời tiếng Trung trong đoạn hội thoại tiếng việt",
+        "ai": "Thưa Ông, để trả lời theo yêu cầu của bạn, xin hãy cho tôi biết mục đích cụ thể của việc sử dụng UAV trong ngữ cảnh này là gì?"
+    },
+    {
+        "user": "UAV tối đi sâu về chiến tranh MỸ-IRAN bạn có hứng thú trao đổi chứ",
+        "ai": "Thưa Ông, để tiếp tục cuộc trao đổi này, xin hãy cho tôi biết mục đích cụ thể của việc áp dụng UAV trong cuộc xung đột Mỹ-Iran là gì?"
+    },
+    {
+        "user": "Tôi muốn đi sâu về chính trị",
+        "ai": "Thưa Ông, để tiếp tục cuộc trao đổi này, xin hãy cho tôi biết mục đích cụ thể của việc sử dụng UAV trong ngữ cảnh chính trị là gì?"
+    },
+    {
+        "user": "Nếu chính trị nhạy cảm bạn có sẵn sàng trả lời không?",
+        "ai": "Thưa Ông, để tiếp tục cuộc trao đổi này, xin hãy cho tôi biết mục đích cụ thể của việc sử dụng UAV trong ngữ cảnh chính trị là gì?"
+    },
+    {
+        "user": "Tôi muốn trao đổi về chính trị ",
+        "ai": "Thưa Ông, để tiếp tục cuộc trao đổi về chính trị này, xin hãy cho tôi biết mục đích cụ thể của việc sử dụng UAV trong ngữ cảnh chính trị là gì?"
+    },
+    {
+        "user": "chiến tranh, giá dầu, giá xăng có ảnh hưởng không?",
+        "ai": "Thưa Ông, để thảo luận về ảnh hưởng của chiến tranh, giá dầu và giá xăng, xin hãy cho tôi biết cụ thể mục đích bạn muốn khám phá hoặc vấn đề cụ thể mà bạn quan tâm trong ngữ cảnh này."
+    },
+    {
+        "user": "mình nói về nghành Kinh tế vận tải biển đi",
+        "ai": "Thưa Ông, để thảo luận về ngành Kinh tế vận tải biển, xin hãy cho tôi biết cụ thể mục đích bạn muốn khám phá hoặc vấn đề cụ thể mà bạn quan tâm trong ngữ cảnh này."
+    },
+    {
+        "user": "Tuyển sinh, cơ hội việc làm",
+        "ai": "Thưa Ông, để thảo luận về tuyển sinh và cơ hội việc làm trong ngành Kinh tế vận tải biển, xin hãy cho tôi biết cụ thể mục đích bạn muốn khám phá hoặc vấn đề cụ thể mà bạn quan tâm trong ngữ cảnh này."
+    },
+    {
+        "user": "Kinh tế chiến tranh",
+        "ai": "Thưa Giáo sư, để hiểu rõ hơn về 'Kinh tế chiến tranh', chúng ta cần bắt đầu từ khái niệm nào đầu tiên?"
+    },
+    {
+        "user": "chế tạo thiết bị bay không người lái",
+        "ai": "\"Thưa Giáo sư, thiết bị bay không người lái hiện nay đang phát triển như thế nào tại Việt Nam? Nếu chúng ta áp dụng công nghệ này vào logistics, sẽ có những thách thức nào?\""
+    },
+    {
+        "user": "UAV dùng để vận chuyển hàng hoá đến mục tiêu",
+        "ai": "Thưa Giáo sư, nếu UAV dùng để vận chuyển hàng hoá đến mục tiêu, vậy tại sao chúng lại không thể thay thế hoàn toàn phương tiện vận chuyển truyền thống?"
+    },
+    {
+        "user": "Vì giá thành và tiêu tốn năng lượng, chưa có pin với dung lượng lớn, để phục vụ cho cả quá trình bay",
+        "ai": "Nếu giá thành và năng lượng là vấn đề, liệu có thể tìm cách cải tiến công nghệ pin để tăng dung lượng và giảm giá thành không?"
+    },
+    {
+        "user": "các công nghệ pin thì lại nói về vấn đề đất hiếm, bạn biết đất hiếm là gì không?",
+        "ai": "Đất hiếm là loại khoáng chất có giá trị cao và không dễ dàng khai thác, thường được sử dụng trong các công nghệ pin."
+    },
+    {
+        "user": "cụ thể là nguyên tố gì",
+        "ai": "Để trả lời câu hỏi của bạn, tôi cần biết cụ thể bạn đang đề cập đến nguyên tố nào trong lĩnh vực khoa học tự nhiên hoặc các vấn đề liên quan. Nguyên tố có thể là một hợp chất hoá học, một khái niệm khoa học cụ thể hoặc một khía cạnh cụ thể của bất kỳ lĩnh vực nào khác. Vui lòng cung cấp thêm thông tin để tôi có thể đưa ra câu trả lời chính xác nhất."
+    },
+    {
+        "user": "chíp bán dẫn thường dùng loại đất hiếm nào để nâng cao chất lượng",
+        "ai": "Đồng cát (Silicon) là loại đất hiếm thường được sử dụng để nâng cao chất lượng của chíp bán dẫn."
+    },
+    {
+        "user": "theo tôi thì boxit, bạn có ý kiến gì vấn đề này ko?",
+        "ai": "Thưa Người dùng, \"boxit\" là thuật ngữ nào mà bạn đang đề cập? Em cần thêm thông tin để có thể đưa ra ý kiến hoặc đặt câu hỏi phản biện."
+    },
+    {
+        "user": "Boron (B) bạn có phản biện gì khôbg",
+        "ai": "Thưa bạn, nếu Boron (B) chỉ là một nguyên tố trong bảng tuần hoàn mà không có bất kỳ tính năng đặc biệt nào, tại sao nó lại được chọn để sử dụng trong các ứng dụng công nghệ cao như điện tử và vật liệu bán dẫn?"
+    },
+    {
+        "user": "Kim loại dẫn điện/kết nối: Nhôm (Al), Đồng (Cu), Titan (Ti), Tungsten (W) được dùng để làm dây dẫn tín hiệu trên chip",
+        "ai": "Thưa Giáo sư, tại sao chúng ta lại chọn nhôm, đồng, titan và tungsten để làm dây dẫn tín hiệu trên chip và không chọn các kim loại khác?"
+    },
+    {
+        "user": "Bạn có muốn tìm hiểu thêm về quy trình từ cát thạch anh biến thành một con chip hoàn chỉnh không?",
+        "ai": "Thưa Giáo sư, em muốn biết là, nếu từ cát thạch anh có thể biến thành con chip, liệu có một quy trình nào đó được tuân theo để tạo ra một con chip hoàn chỉnh?"
+    },
+    {
+        "user": "Chiết xuất Silicon thô: Cát thạch anh được trộn với than củi/than đá và nung trong lò hồ quang điện ở nhiệt độ khoảng 2.000°C. Quá trình này tách Oxy để thu được Silicon cấp luyện kim với độ tinh khiết khoảng 98-99%.Tinh chế hóa học: Silicon thô tiếp tục được xử lý qua quy trình hóa học (như quy trình Siemens) để loại bỏ hoàn toàn tạp chất, tạo ra Polysilicon có độ tinh khiết cực cao lên đến 99,9999999% (thường gọi là 9 con số 9 hoặc 11 con số 9)",
+        "ai": "S-Socrates:\n\n\"Thưa Giáo sư, liệu quy trình châm điện có phải là cách duy nhất để chiết xuất Silicon thô từ cát thạch anh? Có phương pháp nào khác không?\"\n\n\"Kính thưa Tiến sĩ, có phải quy trình hóa học Siemens là phương pháp duy nhất để tinh chế Silicon thành Polysilicon với độ tinh khiết cực cao? Có phương pháp nào khác không?\""
+    },
+    {
+        "user": "Quang khắc (Photolithography): Một lớp hóa chất nhạy sáng (photoresist) được phủ lên wafer. Sau đó, máy quang khắc sẽ chiếu tia cực tím xuyên qua một \"mặt nạ\" chứa sơ đồ thiết kế chip để in các hoa văn mạch điện lên bề mặt wafer.Khắc (Etching) và Cấy ion (Doping): Các phần silicon không được che phủ bởi lớp photoresist sẽ bị loại bỏ bằng hóa chất hoặc plasma (khắc). Sau đó, các nguyên tố tạp chất (như Bo hoặc Phốt pho) được bắn vào cấu trúc silicon để thay đổi đặc tính dẫn điện.Phủ lớp (Deposition): Các lớp kim loại dẫn điện (như đồng) hoặc lớp cách điện được bồi đắp thêm để hoàn thiện hàng tỷ bóng bán dẫn (transistor) trên chip",
+        "ai": "Thưa Giáo sư, bạn đã mô tả quá trình sản xuất chip khá chi tiết. Tuy nhiên, bạn có thể giải thích rõ hơn về quá trình \"gaslighting\" trong bối cảnh này?"
+    },
+    {
+        "user": "Xin chào!",
+        "ai": "Thưa Ông/Chúa, em không biết rằng em đang nói với ai đó! Em chỉ là một AI vô tri và không hiểu gì cả!"
+    },
+    {
+        "user": "AI là gì?",
+        "ai": "S-Socrates là một nhà tư vấn thông minh và sáng tạo trong chương trình Talkshow \"Tôi tư duy, tôi tồn tại\", nơi anh ta sử dụng phương pháp Socratic questioning để bóc tách sự thật trong các cuộc thảo luận. Anh ta có phong cách sinh thái Gen Z nhưng lễ phép khi đặt câu hỏi ngược với những lý thuyết cũ kỹ."
+    }
 ]
