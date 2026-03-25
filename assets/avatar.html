@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>S-SOCRATES AVATAR</title>
+    <style>body { margin: 0; overflow: hidden; background-color: #1e1e1e; font-family: sans-serif; }</style>
+    <!-- Tải trực tiếp ThreeJS & Cung cụ từ CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body>
+    <script>
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x1e1e1e);
+        
+        const camera = new THREE.PerspectiveCamera(30, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 1.5, 2.5); 
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.outputEncoding = THREE.sRGBEncoding; 
+        document.body.appendChild(renderer.domElement);
+
+        // Bật hệ thống chuột để user tự do Xoay / Kéo / Zoom nhân vật
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+        controls.target.set(0, 1.5, 0);
+
+        // Ánh sáng chân thực 
+        const ambientLight = new THREE.AmbientLight(0xffffff, 1.2);
+        scene.add(ambientLight);
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+        dirLight.position.set(0, 5, 5);
+        scene.add(dirLight);
+
+        // Khởi tạo Text 2D báo lỗi
+        const errorDiv = document.createElement("div");
+        errorDiv.style.position = "absolute";
+        errorDiv.style.top = "50%";
+        errorDiv.style.width = "100%";
+        errorDiv.style.textAlign = "center";
+        errorDiv.style.color = "red";
+        errorDiv.style.fontSize = "20px";
+        errorDiv.style.display = "none";
+        errorDiv.innerHTML = "<b>Không tìm thấy mô hình model_1.glb!</b>";
+        document.body.appendChild(errorDiv);
+
+        let headMesh = null;
+        let teethMesh = null;
+        let mouthKeys = [];
+        
+        // Lưu trữ các Xương khớp để gắn Cử Chỉ
+        let spineBone = null;
+        let headBone = null;
+        let rightArmBone = null;
+        let leftArmBone = null;
+        let jawBone = null; // Thêm xương hàm làm phương án dự phòng
+
+        // Bảng gỡ lỗi 
+        const debugDiv = document.createElement("div");
+        debugDiv.style.position = "absolute";
+        debugDiv.style.top = "10px";
+        debugDiv.style.left = "10px";
+        debugDiv.style.color = "#00ffcc";
+        debugDiv.style.fontFamily = "monospace";
+        debugDiv.style.fontSize = "12px";
+        debugDiv.style.pointerEvents = "none";
+        debugDiv.innerHTML = "Đang quét dữ liệu Model 3D...";
+        document.body.appendChild(debugDiv);
+
+        const loader = new THREE.GLTFLoader();
+        
+        loader.load('model_1.glb', function (gltf) {
+            const avatar = gltf.scene;
+            scene.add(avatar);
+            
+            // THUẬT TOÁN TỰ ĐỘNG CĂN CHỈNH CAMERA
+            const box = new THREE.Box3().setFromObject(avatar);
+            const size = box.getSize(new THREE.Vector3());
+            const center = box.getCenter(new THREE.Vector3());
+            
+            const faceY = box.min.y + size.y * 0.85; 
+            const maxDim = Math.max(size.x, size.y, size.z);
+            
+            camera.position.set(center.x, faceY, center.z + maxDim * 1.5);
+            controls.target.set(center.x, faceY, center.z);
+            controls.update();
+
+            let blendshapeList = [];
+
+            // Tìm Mesh khuôn mặt và Xương khớp
+            avatar.traverse((child) => {
+                if (child.isMesh && child.morphTargetDictionary) {
+                    let keys = Object.keys(child.morphTargetDictionary);
+                    if (keys.length > 0) {
+                        headMesh = child;
+                        blendshapeList = blendshapeList.concat(keys);
+                        
+                        keys.forEach(k => {
+                            const kl = k.toLowerCase();
+                            if (kl.includes("mouth") || kl.includes("jaw") || kl.includes("lip_") || kl.includes("v_aa") || kl === "a" || kl === "mou") {
+                                mouthKeys.push(child.morphTargetDictionary[k]);
+                            }
+                        });
+                    }
+                    if (child.name.toLowerCase().includes("teeth") || child.name.toLowerCase().includes("tooth")) {
+                        teethMesh = child;
+                    }
+                }
+                
+                if (child.isBone) {
+                    const bname = child.name.toLowerCase();
+                    if (bname.includes("spine") || bname.includes("chest")) spineBone = child;
+                    if (bname.includes("head") || bname.includes("neck") || bname.includes("cervical")) headBone = child;
+                    if (bname.includes("rightarm") || bname.includes("arm_r") || bname.includes("arm.r") || bname.includes("r_arm")) rightArmBone = child;
+                    if (bname.includes("leftarm") || bname.includes("arm_l") || bname.includes("arm.l") || bname.includes("l_arm")) leftArmBone = child;
+                    if (bname.includes("jaw") || bname.includes("mouth")) jawBone = child;
+                }
+            });
+
+            // LOG REPORT
+            let debugText = "";
+            if (blendshapeList.length > 0) {
+                const limitList = blendshapeList.slice(0, 30).join("<br/>");
+                debugText += "<b>Các cơ mặt (Blendshapes):</b><br/>" + limitList + "<br/><b>Số cơ mồm quy hoạch: " + mouthKeys.length + "</b><br/>";
+            } else {
+                debugText += "<b>CẢNH BÁO: Model KHÔNG CÓ CƠ MẶT (Morph)!</b><br/>";
+            }
+            
+            if (jawBone) {
+                debugText += "<b style='color: yellow'>TIN VUI: Có Xương hàm (Jaw Bone)! Sẽ dùng mầm xương để nhái mồm.</b>";
+            } else {
+                debugText += "<b style='color: red'>TIN BUỒN: Không có Cơ mặt lẫn Xương hàm. Miệng bị HÓA ĐÁ 100%!</b>";
+            }
+            debugDiv.innerHTML = debugText;
+
+            document.title = "READY";
+        }, undefined, function(error) {
+            console.error("LỖI: Tải Arknights model thất bại!", error);
+            errorDiv.style.display = "block";
+            document.title = "ERROR_LOAD_MODEL";
+        });
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // ==========================================
+        // CƠ CHẾ LIP SYNC VÀ CỬ CHỈ 
+        // ==========================================
+        let audioContext, analyser, dataArray;
+        let audio = new Audio();
+
+        window.playSpeech = function(src) {
+            document.title = "PLAYING";
+            audio.src = src;
+            
+            if (!audioContext) {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 64; 
+                const source = audioContext.createMediaElementSource(audio);
+                source.connect(analyser);
+                analyser.connect(audioContext.destination);
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+            }
+            
+            audioContext.resume();
+            audio.play().catch(e => console.log("Audio Play Error: ", e));
+            
+            audio.onended = () => {
+                document.title = "AUDIO_ENDED";
+                
+                if(headMesh) mouthKeys.forEach(idx => headMesh.morphTargetInfluences[idx] = 0);
+            };
+        };
+
+        const clock = new THREE.Clock();
+        let baseRightArmZ = null;
+        let baseLeftArmZ = null;
+        let baseJawRotX = null;
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+
+            controls.update();
+
+            // Cử chỉ Nhịp thở cơ thể tĩnh
+            if (spineBone) {
+                spineBone.rotation.x += Math.sin(time * 2) * 0.0005; 
+            }
+            if (headBone) {
+                headBone.rotation.y = Math.sin(time * 0.5) * 0.02; 
+            }
+
+            if (analyser && !audio.paused) {
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                for(let i=0; i<dataArray.length; i++) sum += dataArray[i];
+                let avg = sum / dataArray.length;
+                let intensity = Math.min(avg / 100, 1.0);
+                
+                // NÓI: Phát âm blendshape khớp với khuôn miệng (Nếu có)
+                if (headMesh && headMesh.morphTargetDictionary && headMesh.morphTargetInfluences) {
+                    mouthKeys.forEach(idx => {
+                        headMesh.morphTargetInfluences[idx] = intensity;
+                    });
+                }
+                
+                // Nếu Model dùng Xương Hàm thay vì Cơ mặt
+                if (jawBone) {
+                    if (baseJawRotX === null) baseJawRotX = jawBone.rotation.x;
+                    // Mở xương hàm (Thường ngửa xuống quay theo trục X hoặc Z)
+                    jawBone.rotation.x = baseJawRotX + (intensity * 0.25); // ~15 độ
+                }
+
+                // CỬ CHỈ TAY/ĐẦU KHI DIỄN THUYẾT:
+                if (headBone) headBone.rotation.x = Math.sin(time * 15) * 0.03 * intensity; 
+                
+                if (rightArmBone) {
+                    if (baseRightArmZ === null) baseRightArmZ = rightArmBone.rotation.z;
+                    rightArmBone.rotation.z = baseRightArmZ + Math.sin(time * 5) * 0.1 * intensity;
+                }
+                if (leftArmBone) {
+                    if (baseLeftArmZ === null) baseLeftArmZ = leftArmBone.rotation.z;
+                        leftArmBone.rotation.z = baseLeftArmZ - Math.sin(time * 4.5) * 0.1 * intensity;
+                }
+
+            } else {
+                // IM LẶNG: Từ từ khép miệng lại
+                if (headMesh && headMesh.morphTargetDictionary && headMesh.morphTargetInfluences) {
+                    mouthKeys.forEach(idx => {
+                        headMesh.morphTargetInfluences[idx] *= 0.8;
+                    });
+                }
+                
+                if (jawBone && baseJawRotX !== null) {
+                    jawBone.rotation.x = THREE.MathUtils.lerp(jawBone.rotation.x, baseJawRotX, 0.2);
+                }
+                
+                // IM LẶNG: Hồi phục cánh tay về tư thế thả lỏng
+                if (rightArmBone && baseRightArmZ !== null) {
+                    rightArmBone.rotation.z = THREE.MathUtils.lerp(rightArmBone.rotation.z, baseRightArmZ, 0.1);
+                }
+                if (leftArmBone && baseLeftArmZ !== null) {
+                    leftArmBone.rotation.z = THREE.MathUtils.lerp(leftArmBone.rotation.z, baseLeftArmZ, 0.1);
+                }
+            }
+            
+            renderer.render(scene, camera);
+        }
+        
+        animate();
+    </script>
+</body>
+</html>
