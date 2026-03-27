@@ -46,4 +46,4 @@ Thumbs.db
 *.log
 push_output.txt
 
-**/*.json
+**/project-*.json

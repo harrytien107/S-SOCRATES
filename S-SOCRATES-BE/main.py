@@ -1,31 +1,31 @@
 import os
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
-from services.memory_service import memory_service
-from services.llm_service import ask_socrates
-from services.stt_service import transcribe_audio
-from services.tts_service import generate_speech_stream, get_vietnamese_voices
+from services.stt_service import process_stt_request
+from services.chat_orchestrator import process_chat_message
+from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
 
 # =========================
 # FastAPI Configuration
 # =========================
-
 app = FastAPI(title="S-Socrates API", description="Backend cho Voice Chat với Whisper VAD và LlamaIndex")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origins=["*"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+load_dotenv()
+
 # =========================
 # Input Models
 # =========================
-
 class ChatRequest(BaseModel):
     message: str
 
@@ -36,37 +36,35 @@ class TTSRequest(BaseModel):
 # =========================
 # Endpoints
 # =========================
-
 @app.get("/")
 async def root():
     return {"status": "S-Socrates API is running clean and fast!"}
 
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    # Retrieve conversation history
-    history_context = memory_service.get_context_string()
-
-    # Query LLM / LlamaIndex core
-    response_text = ask_socrates(req.message, history_context)
-    
-    # Save the new exchange to memory
-    memory_service.save(req.message, response_text)
-    
+    response_text = process_chat_message(req.message)
     return {"response": response_text}
 
 @app.post("/stt")
 async def speech_to_text(file: UploadFile = File(...)):
     try:
-        text = await transcribe_audio(file)
+        text = process_stt_request(file)
         return {"text": text}
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return {"error": str(e)}
 
 @app.post("/tts")
-async def text_to_speech(req: TTSRequest):
-    return await generate_speech_stream(req.text, req.voice)
+async def text_to_speech(req: TTSRequest, background_tasks: BackgroundTasks):
+    try:
+        return process_tts_request(req.text, req.voice, background_tasks)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
 
 @app.get("/tts/voices")
 async def list_vi_voices():
-    voices = await get_vietnamese_voices()
+    voices = [{"Name": v, "Locale": "vi-VN"} for v in CHIRP3_HD_VOICES]
     return {"voices": voices}

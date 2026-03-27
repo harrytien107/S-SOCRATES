@@ -2,7 +2,6 @@ from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
 from llama_index.llms.ollama import Ollama
 from llama_index.core.settings import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from huggingface_hub import snapshot_download
 
 # =========================
 # S-Socrates Prompt
@@ -34,14 +33,9 @@ def init_query_engine():
     )
 
     # Local Embedding
-    try:
-        # Trích xuất thẳng đường dẫn thư mục bộ nhớ để chặn 100% truy vấn mạng
-        model_path = snapshot_download("sentence-transformers/all-MiniLM-L6-v2", local_files_only=True)
-        embed_model = HuggingFaceEmbedding(model_name=model_path)
-    except Exception:
-        print("Đang tải model Embedding lần đầu (Chỉ một lần duy nhất)...")
-        model_path = snapshot_download("sentence-transformers/all-MiniLM-L6-v2", local_files_only=False)
-        embed_model = HuggingFaceEmbedding(model_name=model_path)
+    embed_model = HuggingFaceEmbedding(
+        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    )
 
     Settings.llm = llm
     Settings.embed_model = embed_model

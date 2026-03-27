@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
+import 'package:voice_chat_app/services/api_config.dart';
 
 // Conditional import: chỉ import dart:js_interop khi chạy trên web
 import 'package:voice_chat_app/services/web_audio_stub.dart'
@@ -19,10 +20,7 @@ extension type _Audio._(JSObject _) implements JSObject {
   external set onerror(JSFunction? handler);
 }
 
-const String _ttsBaseUrl = String.fromEnvironment(
-  'API_BASE_URL',
-  defaultValue: 'http://localhost:8000',
-);
+
 
 // Biến lưu trữ audio element trên Web
 dynamic _currentWebAudio;
@@ -46,7 +44,7 @@ Future<void> speak(String text) async {
   await stopSpeaking();
 
   try {
-    final uri = Uri.parse('$_ttsBaseUrl/tts');
+    final uri = Uri.parse('${ApiConfig.baseUrl}/tts');
     final response = await http
         .post(
           uri,

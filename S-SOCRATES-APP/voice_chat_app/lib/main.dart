@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
 
-void main() {
+import 'package:voice_chat_app/services/api_config.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await ApiConfig.init();
   runApp(const SSocratesApp());
 }
 
