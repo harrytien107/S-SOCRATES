@@ -2,14 +2,10 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:voice_chat_app/services/api_config.dart';
 
 class AgentAPI {
-  static const String _apiBaseUrl = String.fromEnvironment(
-    'API_BASE_URL',
-    defaultValue: 'http://localhost:8000',
-  );
-
-  Uri get _chatUri => Uri.parse('$_apiBaseUrl/chat');
+  Uri get _chatUri => Uri.parse('${ApiConfig.baseUrl}/chat');
 
   Future<String> sendMessage(String message) async {
     try {
@@ -42,7 +38,7 @@ class AgentAPI {
     } on http.ClientException catch (e) {
       debugPrint('AgentAPI ClientException: $e');
       throw Exception(
-          'Không kết nối được backend tại $_apiBaseUrl. '
+          'Không kết nối được backend tại ${ApiConfig.baseUrl}. '
           'Kiểm tra backend đang chạy và CORS đã bật.');
     }
   }
@@ -50,7 +46,7 @@ class AgentAPI {
   Future<String> speechToText(String filePath) async {
     try {
       final request =
-          http.MultipartRequest('POST', Uri.parse('$_apiBaseUrl/stt'));
+          http.MultipartRequest('POST', Uri.parse('${ApiConfig.baseUrl}/stt'));
       request.files.add(await http.MultipartFile.fromPath('file', filePath));
 
       final streamedResponse =
