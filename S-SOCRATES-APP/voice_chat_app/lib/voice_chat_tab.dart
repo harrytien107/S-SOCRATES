@@ -22,6 +22,7 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   final ScrollController _scroll = ScrollController();
 
   final List<Map<String, dynamic>> _messages = [];
+  List<Map<String, dynamic>> _presetCandidates = []; // Store preset candidates
   bool _isLoading = false;
   bool _isListening = false;
   bool _isTranscribing = false;
@@ -68,12 +69,8 @@ class _VoiceChatTabState extends State<VoiceChatTab>
           if (m['speaking'] == true) m['speaking'] = false;
         }
       });
-      // Auto-listen after AI finishes speaking for natural conversation flow
-      Future.delayed(const Duration(milliseconds: 600), () {
-        if (mounted && !_isLoading && !_isListening && _activeSessionId == null) {
-          _startSession();
-        }
-      });
+      // Turn-based: Do NOT auto-listen after AI finishes speaking
+      // User needs to manually press mic button again
     });
     setTTSCancelHandler(() {
       // User manually stopped TTS -- don't auto-listen
@@ -244,7 +241,7 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   Future<void> _stopSession() async {
     final sid = _activeSessionId;
     _activeSessionId = null;
-    
+
     _amplitudeSub?.cancel();
     _amplitudeSub = null;
     _silenceTimer?.cancel();
@@ -261,19 +258,26 @@ class _VoiceChatTabState extends State<VoiceChatTab>
     try {
       final path = await _recorder.stop();
       if (path != null && mounted) {
-        final text = await _api.speechToText(path);
-        debugPrint('Whisper result: "$text"');
-        
+        // Use new /process-audio endpoint to get transcript + candidates
+        final result = await _api.processAudio(path);
+        final text = result['transcript'] as String;
+        final candidates = result['candidates'] as List<dynamic>;
+
+        debugPrint('Process audio result: "$text"');
+        debugPrint('Candidates: ${candidates.length}');
+
         if (text.trim().isNotEmpty) {
           setState(() {
             _showOverlay = false;
             _isTranscribing = false;
+            _presetCandidates = candidates.cast<Map<String, dynamic>>();
           });
           await _send(text);
         } else {
           setState(() {
             _showOverlay = false;
             _isTranscribing = false;
+            _presetCandidates = [];
             _errorMessage = 'Không nghe rõ bạn nói gì. Hãy thử lại.';
           });
         }
@@ -281,14 +285,16 @@ class _VoiceChatTabState extends State<VoiceChatTab>
         setState(() {
           _showOverlay = false;
           _isTranscribing = false;
+          _presetCandidates = [];
         });
       }
     } catch (e) {
-      debugPrint('Stop session/STT error: $e');
+      debugPrint('Stop session/Process audio error: $e');
       if (mounted) {
         setState(() {
           _showOverlay = false;
           _isTranscribing = false;
+          _presetCandidates = [];
           _errorMessage = 'Lỗi nhận diện: $e';
         });
       }
@@ -346,6 +352,7 @@ class _VoiceChatTabState extends State<VoiceChatTab>
                       const TextStyle(color: Color(0xFFFCA5A5), fontSize: 13),
                 ),
               ),
+            if (_presetCandidates.isNotEmpty) _candidateSuggestions(),
             _micBar(),
           ],
         ),
@@ -373,6 +380,137 @@ class _VoiceChatTabState extends State<VoiceChatTab>
             _dot(const Color(0xFF86EFAC)),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _candidateSuggestions() {
+    // Show top 3 candidates if available
+    final topCandidates = _presetCandidates.take(3).toList();
+    if (topCandidates.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(10, 8, 10, 0),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF091A15).withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF275A48)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.lightbulb_outline,
+                  color: Color(0xFFFCD34D), size: 16),
+              const SizedBox(width: 6),
+              const Text(
+                'Gợi ý preset:',
+                style: TextStyle(
+                  color: Color(0xFFFCD34D),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const Spacer(),
+              InkWell(
+                onTap: () => setState(() => _presetCandidates = []),
+                child: const Icon(Icons.close, color: Colors.white54, size: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ...topCandidates.map((candidate) {
+            final score = (candidate['score'] as num).toDouble();
+            final question = candidate['question'] as String;
+            final answer = candidate['answer'] as String;
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
+                  onTap: () async {
+                    // Use this preset answer directly
+                    setState(() {
+                      _presetCandidates = [];
+                      _messages.add({
+                        'text': answer,
+                        'user': false,
+                        'time': DateTime.now(),
+                        'speaking': true,
+                      });
+                      _isSpeakingTTS = true;
+                    });
+                    _scrollDown();
+                    await speak(answer);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F241D),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: const Color(0xFF34D399).withValues(alpha: 0.3),
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                question,
+                                style: const TextStyle(
+                                  color: Color(0xFF86EFAC),
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                ),
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF16A34A)
+                                    .withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Text(
+                                '${(score * 100).toStringAsFixed(0)}%',
+                                style: const TextStyle(
+                                  color: Color(0xFF86EFAC),
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          answer,
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.7),
+                            fontSize: 11,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }

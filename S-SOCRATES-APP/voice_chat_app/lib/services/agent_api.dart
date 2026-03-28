@@ -66,4 +66,34 @@ class AgentAPI {
       throw Exception('Lỗi nhận diện giọng nói: $e');
     }
   }
+
+  /// Process audio: gửi audio lên backend, nhận transcript + preset candidates
+  /// Returns: Map với keys 'transcript' và 'candidates'
+  Future<Map<String, dynamic>> processAudio(String filePath) async {
+    try {
+      final request = http.MultipartRequest(
+          'POST', Uri.parse('${ApiConfig.baseUrl}/process-audio'));
+      request.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+      final streamedResponse =
+          await request.send().timeout(const Duration(seconds: 45));
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data.containsKey('error')) {
+          throw Exception(data['error']);
+        }
+        // Return both transcript and candidates
+        return {
+          'transcript': data['transcript'] ?? '',
+          'candidates': data['candidates'] ?? []
+        };
+      }
+      throw Exception('Process Audio Server Error ${response.statusCode}');
+    } catch (e) {
+      debugPrint('AgentAPI processAudio error: $e');
+      throw Exception('Lỗi xử lý audio: $e');
+    }
+  }
 }
