@@ -6,7 +6,6 @@ import 'ai_orb_widget.dart';
 import 'ai_status_badge.dart';
 import 'ai_subtitle_panel.dart';
 import '../services/api_config.dart';
-import '../services/tts_service.dart';
 import '../controllers/robot_controller.dart';
 
 /// Màn hình sân khấu chính — wireframe orb, tối giản
