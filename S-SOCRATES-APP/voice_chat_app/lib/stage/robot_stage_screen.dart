@@ -1,16 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:record/record.dart';
-import 'package:path_provider/path_provider.dart';
-
 import 'robot_ui_state.dart';
 import 'animated_background.dart';
 import 'ai_orb_widget.dart';
 import 'ai_status_badge.dart';
 import 'ai_subtitle_panel.dart';
-import '../services/agent_api.dart';
-import '../services/text_to_speak.dart';
 import '../services/api_config.dart';
+import '../services/tts_service.dart';
+import '../controllers/robot_controller.dart';
 
 /// Màn hình sân khấu chính — wireframe orb, tối giản
 class RobotStageScreen extends StatefulWidget {
@@ -27,17 +24,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
   String? _errorMessage;
 
   // ── Services ──────────────────────────────────────────────────
-  final AgentAPI _api = AgentAPI();
-  final AudioRecorder _recorder = AudioRecorder();
-
-  // ── Recording / VAD ───────────────────────────────────────────
-  StreamSubscription<Amplitude>? _amplitudeSub;
-  Timer? _silenceTimer;
-  int _sessionSeed = 0;
-  int? _activeSessionId;
-  bool _voiceSupported = true;
-  static const double _silenceThreshold = -40.0;
-  static const int _silenceDurationMs = 1800;
+  final RobotController _robotController = RobotController();
 
   // ── Mock / demo ────────────────────────────────────────────────
   bool _isMockMode = true;
@@ -49,37 +36,34 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
   @override
   void initState() {
     super.initState();
-    _initMic();
-    _initTTSListeners();
+    _setupController();
+
     // Hide tap hint after 4 seconds
     Future.delayed(const Duration(seconds: 4), () {
       if (mounted) setState(() => _showHint = false);
     });
   }
 
-  void _initTTSListeners() {
-    setTTSCompletionHandler(() {
-      if (!mounted) return;
-      setState(() {
-        _uiState = RobotUiState.idle;
-        _subtitle = null;
-      });
-      Future.delayed(const Duration(milliseconds: 600), () {
-        if (mounted && _uiState == RobotUiState.idle) _startListening();
-      });
+  void _setupController() {
+    _robotController.state.addListener(() {
+      if (mounted && !_isMockMode) {
+        setState(() => _uiState = _robotController.state.value);
+      }
     });
-    setTTSCancelHandler(() {
-      if (!mounted) return;
-      setState(() {
-        _uiState = RobotUiState.idle;
-        _subtitle = null;
-      });
-    });
-  }
 
-  Future<void> _initMic() async {
-    final ok = await _recorder.hasPermission();
-    if (mounted) setState(() => _voiceSupported = ok);
+    _robotController.currentMessage.addListener(() {
+      if (mounted && !_isMockMode) {
+        final text = _robotController.currentMessage.value;
+        setState(() {
+          _subtitle = text.length > 80 ? '${text.substring(0, 80)}…' : text;
+          if (text.isEmpty) _subtitle = null;
+        });
+      }
+    });
+
+    if (!_isMockMode) {
+      _robotController.startPolling();
+    }
   }
 
   // ── Tap orb ───────────────────────────────────────────────────
@@ -87,29 +71,8 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
     setState(() => _showHint = false);
     if (_isMockMode) {
       _cycleMockState();
-    } else {
-      _handleRealTap();
     }
-  }
-
-  Future<void> _handleRealTap() async {
-    switch (_uiState) {
-      case RobotUiState.idle:
-        await _startListening();
-        break;
-      case RobotUiState.listening:
-        await _stopListening();
-        break;
-      case RobotUiState.speaking:
-        await stopSpeaking();
-        setState(() {
-          _uiState = RobotUiState.idle;
-          _subtitle = null;
-        });
-        break;
-      default:
-        break;
-    }
+    // Real tap to listen is disabled as per "Không dùng voice input"
   }
 
   void _cycleMockState() {
@@ -120,115 +83,13 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
       _subtitle = next == RobotUiState.speaking
           ? kMockSubtitles[_mockSubtitleIndex++ % kMockSubtitles.length]
           : null;
-      _errorMessage =
-          next == RobotUiState.error ? kMockErrorMessage : null;
+      _errorMessage = next == RobotUiState.error ? kMockErrorMessage : null;
     });
-  }
-
-  // ── Real voice flow ────────────────────────────────────────────
-  bool _isActive(int id) => _activeSessionId == id;
-
-  Future<void> _startListening() async {
-    if (!_voiceSupported || _activeSessionId != null) return;
-    try {
-      if (await _recorder.isRecording()) await _recorder.stop();
-    } catch (_) {}
-    final sid = ++_sessionSeed;
-    _activeSessionId = sid;
-    setState(() {
-      _uiState = RobotUiState.listening;
-      _subtitle = null;
-      _errorMessage = null;
-    });
-    try {
-      final dir = await getTemporaryDirectory();
-      final path = '${dir.path}/speech_$sid.m4a';
-      await _recorder.start(
-          const RecordConfig(encoder: AudioEncoder.aacLc), path: path);
-      _amplitudeSub =
-          _recorder.onAmplitudeChanged(const Duration(milliseconds: 100)).listen(
-        (amp) {
-          if (amp.current < _silenceThreshold) {
-            _silenceTimer ??= Timer(
-                const Duration(milliseconds: _silenceDurationMs),
-                () {
-              if (mounted && _isActive(sid)) _stopListening();
-            });
-          } else {
-            _silenceTimer?.cancel();
-            _silenceTimer = null;
-          }
-        },
-      );
-    } catch (e) {
-      _activeSessionId = null;
-      if (mounted) {
-        setState(() {
-          _uiState = RobotUiState.error;
-          _errorMessage = 'Không thể bật mic: $e';
-        });
-      }
-    }
-  }
-
-  Future<void> _stopListening() async {
-    final sid = _activeSessionId;
-    _activeSessionId = null;
-    _amplitudeSub?.cancel();
-    _amplitudeSub = null;
-    _silenceTimer?.cancel();
-    _silenceTimer = null;
-    if (sid == null) return;
-    setState(() => _uiState = RobotUiState.thinking);
-    try {
-      final path = await _recorder.stop();
-      if (path == null || !mounted) return;
-      final text = await _api.speechToText(path);
-      if (text.trim().isEmpty) {
-        setState(() {
-          _uiState = RobotUiState.idle;
-          _errorMessage = 'Không nghe rõ. Hãy thử lại.';
-        });
-        return;
-      }
-      await _sendToAI(text);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _uiState = RobotUiState.error;
-          _errorMessage = 'Lỗi nhận diện giọng nói.';
-        });
-      }
-    }
-  }
-
-  Future<void> _sendToAI(String text) async {
-    try {
-      final reply = await _api.sendMessage(text);
-      if (!mounted) return;
-      final short = reply.length > 80
-          ? '${reply.substring(0, 80).trimRight()}…'
-          : reply;
-      setState(() {
-        _uiState = RobotUiState.speaking;
-        _subtitle = short;
-      });
-      await speak(reply);
-    } catch (e) {
-      if (mounted) {
-        setState(() {
-          _uiState = RobotUiState.error;
-          _errorMessage = 'Backend không phản hồi.';
-        });
-      }
-    }
   }
 
   @override
   void dispose() {
-    _amplitudeSub?.cancel();
-    _silenceTimer?.cancel();
-    _recorder.dispose();
+    _robotController.dispose();
     super.dispose();
   }
 
@@ -239,15 +100,18 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
     final isLandscape = size.width > size.height;
     // orbSize: canvas = size * 1.45, phải fit trong viewport
     final orbSize = isLandscape
-        ? size.height * 0.50   // landscape: 50% height — canvas chiếm ~72%
-        : size.width * 0.62;   // portrait fallback
+        ? size.height *
+              0.50 // landscape: 50% height — canvas chiếm ~72%
+        : size.width * 0.62; // portrait fallback
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
           // Background
-          const Positioned.fill(child: AnimatedBackground(state: RobotUiState.idle)),
+          const Positioned.fill(
+            child: AnimatedBackground(state: RobotUiState.idle),
+          ),
 
           // Main content
           SafeArea(
@@ -259,19 +123,11 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
           ),
 
           // Settings icon — top right, very subtle
-          Positioned(
-            top: 10,
-            right: 12,
-            child: _settingsButton(),
-          ),
+          Positioned(top: 10, right: 12, child: _settingsButton()),
 
           // MOCK badge — top left
           if (_isMockMode)
-            const Positioned(
-              top: 12,
-              left: 12,
-              child: _MockBadge(),
-            ),
+            const Positioned(top: 12, left: 12, child: _MockBadge()),
         ],
       ),
     );
@@ -303,10 +159,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
             child: Text(
               _errorMessage!,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                color: Color(0xFFFF6B6B),
-                fontSize: 13,
-              ),
+              style: const TextStyle(color: Color(0xFFFF6B6B), fontSize: 13),
             ),
           ),
         const SizedBox(height: 12),
@@ -315,7 +168,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
           opacity: _showHint ? 1.0 : 0.0,
           duration: const Duration(milliseconds: 800),
           child: Text(
-            _isMockMode ? 'TAP TO CYCLE STATES' : 'TAP TO SPEAK',
+            _isMockMode ? 'TAP TO CYCLE STATES' : 'POLLING LIVE COMMANDS...',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.2),
               fontSize: 10,
@@ -338,7 +191,9 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
           shape: BoxShape.circle,
           color: Colors.white.withValues(alpha: 0.05),
           border: Border.all(
-              color: Colors.white.withValues(alpha: 0.10), width: 0.8),
+            color: Colors.white.withValues(alpha: 0.10),
+            width: 0.8,
+          ),
         ),
         child: Icon(
           Icons.settings_rounded,
@@ -370,7 +225,9 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
             Text(
               'Backend URL',
               style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.5), fontSize: 11),
+                color: Colors.white.withValues(alpha: 0.5),
+                fontSize: 11,
+              ),
             ),
             const SizedBox(height: 8),
             TextField(
@@ -379,21 +236,24 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
               decoration: InputDecoration(
                 hintText: 'http://192.168.x.x:8000',
                 hintStyle: TextStyle(
-                    color: Colors.white.withValues(alpha: 0.25),
-                    fontSize: 13),
+                  color: Colors.white.withValues(alpha: 0.25),
+                  fontSize: 13,
+                ),
                 enabledBorder: OutlineInputBorder(
                   borderSide: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.15)),
+                    color: Colors.white.withValues(alpha: 0.15),
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 focusedBorder: OutlineInputBorder(
-                  borderSide:
-                      const BorderSide(color: Color(0xFF00B4FF)),
+                  borderSide: const BorderSide(color: Color(0xFF00B4FF)),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 isDense: true,
                 contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 12, vertical: 10),
+                  horizontal: 12,
+                  vertical: 10,
+                ),
               ),
             ),
             const SizedBox(height: 12),
@@ -409,7 +269,15 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
                   value: _isMockMode,
                   activeThumbColor: const Color(0xFF00B4FF),
                   onChanged: (v) {
-                    setState(() => _isMockMode = v);
+                    setState(() {
+                      _isMockMode = v;
+                      if (_isMockMode) {
+                        _robotController.stopPolling();
+                        _uiState = RobotUiState.idle;
+                      } else {
+                        _robotController.startPolling();
+                      }
+                    });
                     Navigator.of(ctx).pop();
                   },
                 ),
@@ -420,8 +288,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(),
-            child:
-                const Text('Hủy', style: TextStyle(color: Colors.white38)),
+            child: const Text('Hủy', style: TextStyle(color: Colors.white38)),
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(
@@ -433,8 +300,10 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
               await ApiConfig.setBaseUrl(ctrl.text.trim());
               if (ctx.mounted) Navigator.of(ctx).pop();
             },
-            child: const Text('Lưu',
-                style: TextStyle(fontWeight: FontWeight.w700)),
+            child: const Text(
+              'Lưu',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
           ),
         ],
       ),

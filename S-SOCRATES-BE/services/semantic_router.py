@@ -50,34 +50,40 @@ class SemanticRouter:
         except Exception as e:
             log.error(f"Lỗi load presets router: {e}")
             
-    def get_best_match(self, user_text: str, threshold: float = 0.75):
+    def get_top_matches(self, user_text: str, top_k: int = 3):
         if not self.model or not self.preset_qs or len(self.preset_vectors) == 0:
-            return None
+            return []
             
         # Vectorize input
         user_vector = self.model.encode([user_text])[0]
         
         # Calculate Cosine Similarity
-        # Dot product / (norm(a) * norm(b))
         dots = np.dot(self.preset_vectors, user_vector)
         norms_presets = np.linalg.norm(self.preset_vectors, axis=1)
         norm_user = np.linalg.norm(user_vector)
         
-        # Chống chia cho 0
         if norm_user == 0:
-            return None
+            return []
             
         similarities = dots / (norms_presets * norm_user)
         
-        best_idx = np.argmax(similarities)
-        best_score = similarities[best_idx]
+        # Get top K
+        top_indices = np.argsort(similarities)[::-1][:top_k]
         
-        log.debug(f"Độ Semantic Match cao nhất: {best_score:.3f} (Câu: '{self.preset_qs[best_idx]}')")
-        
-        if best_score >= threshold:
-            log.info(f"KHỚP VỚI CÂU MẪU (Độ chính xác: {best_score:.2f}) -> Bỏ qua AI, báo đáp án cứng!")
-            return self.preset_as[best_idx]
-            
+        results = []
+        for idx in top_indices:
+            results.append({
+                "question": self.preset_qs[idx],
+                "answer": self.preset_as[idx],
+                "score": float(similarities[idx])
+            })
+        return results
+
+    def get_best_match(self, user_text: str, threshold: float = 0.75):
+        # ... (existing code or simplified)
+        matches = self.get_top_matches(user_text, top_k=1)
+        if matches and matches[0]["score"] >= threshold:
+            return matches[0]["answer"]
         return None
 
 semantic_router = SemanticRouter()

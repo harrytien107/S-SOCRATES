@@ -96,7 +96,7 @@ extension RobotUiStateX on RobotUiState {
     }
   }
 
-  bool get showSubtitle => this == RobotUiState.speaking;
+  bool get showSubtitle => this == RobotUiState.speaking || this == RobotUiState.challenge;
 }
 
 /// Mock subtitles cho demo mode
