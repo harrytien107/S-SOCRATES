@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>S-SOCRATES | OPERATOR CONSOLE</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="logo">
+            S-SOCRATES <span>OPERATOR CONSOLE V2.0</span>
+        </div>
+        <div style="display: flex; gap: 15px; align-items: center;">
+            <div id="status-text" style="font-size: 0.75rem; font-weight: 600; color: var(--text-dim);">
+                <span class="dot" id="online-dot"></span> CONNECTED
+            </div>
+            <button class="settings-btn" onclick="toggleModal(true)">⚙ CONFIG</button>
+        </div>
+    </header>
+
+    <main>
+        <!-- Column 1: Live Input -->
+        <section class="panel">
+            <div class="panel-header">Live Guest Transcript</div>
+            <div class="scroll-area">
+                <div class="transcript-container" id="transcript-box">
+                    Chưa có tín hiệu âm thanh...
+                </div>
+            </div>
+        </section>
+
+        <!-- Column 2: Suggestions -->
+        <section class="panel">
+            <div class="panel-header">
+                Preset Suggestions
+                <span id="match-count" style="opacity: 0.5;">0 matches</span>
+            </div>
+            <div class="scroll-areas" style="flex-grow: 1; overflow-y: auto; padding: 1rem;">
+                <div id="suggestions-list">
+                    <div style="text-align: center; color: var(--text-dim); margin-top: 2rem;">
+                        Waiting for transcript...
+                    </div>
+                </div>
+            </div>
+            <div style="padding: 1rem; border-top: 1px solid var(--border);">
+                <button class="ai-reflex-btn" onclick="useAI()">
+                    <span>✨ GENERATE AI RESPONSE (GEMINI)</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- Column 3: Response Control -->
+        <section class="panel">
+            <div class="panel-header">Response Control</div>    
+            <div class="scroll-area" style="display: flex; flex-direction: column;">
+                <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">FINAL SCRIPT PREVIEW</div>
+                <div class="preview-area" id="final-preview" contenteditable="true"></div>
+
+                <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">SET ROBOT EMOTION</div>
+                <div class="emotion-grid">
+                    <button class="emotion-btn active" onclick="setEmotion('neutral', this)">Neutral</button>
+                    <button class="emotion-btn" onclick="setEmotion('listening', this)">Listening</button>
+                    <button class="emotion-btn" onclick="setEmotion('speaking', this)">Speaking</button>
+                    <button class="emotion-btn" onclick="setEmotion('challenge', this)">Challenge</button>
+                    <button class="emotion-btn" onclick="setEmotion('error', this)">Error</button>
+                </div>
+
+                <button class="send-btn" id="send-trigger" onclick="sendToRobot()" disabled>
+                    SEND TO ROBOT
+                </button>
+                <div id="last-sent-status">Waiting for response...</div>
+                
+                <div class="panel-header" style="margin-top: 1rem; padding: 4px 0; border: none; font-size: 0.65rem;">System Logs</div>
+                <div id="log-container" class="log-panel"></div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Settings Modal -->
+    <div class="modal" id="settings-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 style="margin: 0; color: var(--cyan);">Settings</h2>
+                <button class="settings-btn" onclick="toggleModal(false)">✕</button>
+            </div>
+            <div class="input-group">
+                <label>API BASE URL</label>
+                <input type="text" id="api-base" value="http://localhost:8000">
+            </div>
+            <div class="input-group">
+                <label>TEST AUDIO UPLOAD (.WAV)</label>
+                <input type="file" id="file-upload" accept="audio/wav" onchange="handleFileUpload(this)">
+            </div>
+            <button class="ai-reflex-btn" onclick="saveSettings()" style="background: var(--cyan); color: var(--bg-deep);">SAVE & RECONNECT</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
