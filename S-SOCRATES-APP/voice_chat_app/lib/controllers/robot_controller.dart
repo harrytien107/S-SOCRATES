@@ -56,21 +56,19 @@ class RobotController {
   Future<void> stopRecordingAndProcess() async {
     try {
       final path = await _audioRecorder.stop();
-      if (path != null) {
-        debugPrint('Stopped recording, path: $path');
-        
-        // Gửi lên backend để xử lý (Deepgram STT & Router)
-        final result = await _agentAPI.processAudio(path);
-        latestTranscriptResult.value = result;
-        
-        // Sau khi xử lý xong, chuyển về thinking -> idle (phần logic sendToRobot bên operator sẽ quyết định, không auto nói nữa trừ khi flow live auto).
-        state.value = RobotUiState.thinking;
-        await Future.delayed(const Duration(milliseconds: 500));
+      if (path == null) {
         state.value = RobotUiState.idle;
-
-      } else {
-        state.value = RobotUiState.idle;
+        return;
       }
+
+      debugPrint('Stopped recording, path: $path');
+
+      state.value = RobotUiState.uploading;
+
+      final result = await _agentAPI.processAudio(path);
+      latestTranscriptResult.value = result;
+
+      state.value = RobotUiState.thinking; // giữ nguyên ở đây
     } catch (e) {
       debugPrint('Stop recording error: $e');
       state.value = RobotUiState.error;
@@ -102,7 +100,6 @@ class RobotController {
     try {
       // 1. Thinking state
       state.value = RobotUiState.thinking;
-      await Future.delayed(const Duration(milliseconds: 500));
 
       // 2. Set Emotion & Start Speaking
       currentMessage.value = text;
