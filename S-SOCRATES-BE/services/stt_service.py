@@ -29,8 +29,10 @@ def transcribe_file(wav_path: str) -> str:
     url = f"{DEEPGRAM_API_URL}?model=nova-2&language=vi&smart_format=true"
     headers = {
         "Authorization": f"Token {api_key}",
-        "Content-Type": "audio/wav",
     }
+    
+    # Deepgram can auto-detect the MIME type (including AAC/M4A from Flutter)
+    # So we don't strict it to audio/wav anymore.
 
     log.info(f"Gửi file audio tới Deepgram API: {wav_path}")
 

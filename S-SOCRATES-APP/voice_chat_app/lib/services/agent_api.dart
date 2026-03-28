@@ -43,6 +43,30 @@ class AgentAPI {
     }
   }
 
+  Future<Map<String, dynamic>?> processAudio(String filePath) async {
+    try {
+      final request = http.MultipartRequest(
+          'POST', Uri.parse('${ApiConfig.baseUrl}/process-audio'));
+      request.files.add(await http.MultipartFile.fromPath('file', filePath));
+
+      final streamedResponse =
+          await request.send().timeout(const Duration(seconds: 45));
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data.containsKey('error')) {
+          throw Exception(data['error']);
+        }
+        return data; // Chứa cả transcript và candidates
+      }
+      throw Exception('Process Audio Server Error ${response.statusCode}');
+    } catch (e) {
+      debugPrint('AgentAPI processAudio error: $e');
+      return null;
+    }
+  }
+
   Future<String> speechToText(String filePath) async {
     try {
       final request =
