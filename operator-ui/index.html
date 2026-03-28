@@ -55,16 +55,15 @@
         <section class="panel">
             <div class="panel-header">Response Control</div>    
             <div class="scroll-area" style="display: flex; flex-direction: column;">
-                <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">FINAL SCRIPT PREVIEW</div>
-                <div class="preview-area" id="final-preview" contenteditable="true"></div>
+                <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">FINAL SCRIPT PREVIEW (Read-only)</div>
+                <div class="preview-area" id="final-preview" contenteditable="false"></div>
 
                 <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">SET ROBOT EMOTION</div>
-                <div class="emotion-grid">
+                <div class="emotion-grid-compact">
                     <button class="emotion-btn active" onclick="setEmotion('neutral', this)">Neutral</button>
                     <button class="emotion-btn" onclick="setEmotion('listening', this)">Listening</button>
                     <button class="emotion-btn" onclick="setEmotion('speaking', this)">Speaking</button>
                     <button class="emotion-btn" onclick="setEmotion('challenge', this)">Challenge</button>
-                    <button class="emotion-btn" onclick="setEmotion('error', this)">Error</button>
                 </div>
 
                 <button class="send-btn" id="send-trigger" onclick="sendToRobot()" disabled>

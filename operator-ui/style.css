@@ -170,10 +170,11 @@ main {
     color: var(--text-main);
     border: 1px solid var(--border);
     outline: none;
+    user-select: text;
+    cursor: default;
 }
-.preview-area:focus { border-color: var(--cyan); }
 .preview-area:empty:before {
-    content: "Select a preset or generate AI response to edit here...";
+    content: "Select a preset or generate AI response...";
     color: var(--text-dim);
     font-style: italic;
     font-size: 0.9rem;
@@ -211,6 +212,12 @@ main {
 .emotion-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 1.5rem;
+}
+.emotion-grid-compact {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
     gap: 8px;
     margin-bottom: 1.5rem;
 }

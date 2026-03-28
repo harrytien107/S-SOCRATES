@@ -5,10 +5,9 @@ let lastLogMsg = "";
 window.onload = () => {
     const saved = localStorage.getItem('socrates_api_base');
     if (saved) document.getElementById('api-base').value = saved;
-    
-    const preview = document.getElementById('final-preview');
-    preview.addEventListener('input', updateSendButton);
-    
+
+    // No need for input listener since preview is now read-only
+
     checkConnection();
     updateSendButton(); // Sync initial state
     addLog("Console Ready.");
@@ -149,9 +148,17 @@ function updateSendButton() {
     const rawText = document.getElementById('final-preview').innerText.trim();
     const btn = document.getElementById('send-trigger');
     const hasText = rawText.length > 0;
-    
-    btn.disabled = !hasText;
-    statusMessage(hasText ? "Ready to Send" : "Waiting for response...");
+
+    // Only 'speaking' and 'challenge' require text
+    const requiresText = (selectedEmotion === 'speaking' || selectedEmotion === 'challenge');
+
+    btn.disabled = requiresText && !hasText;
+
+    if (requiresText && !hasText) {
+        statusMessage("Speaking/Challenge requires text...");
+    } else {
+        statusMessage("Ready to Send");
+    }
 }
 
 async function useAI() {
@@ -200,6 +207,7 @@ function setEmotion(emo, btn, explicit = true) {
         el.classList.toggle('active', btnText === emo);
     });
     if (explicit) addLog(`Emotion: ${emo}`);
+    updateSendButton(); // Update button state when emotion changes
 }
 
 async function sendToRobot() {
@@ -207,7 +215,9 @@ async function sendToRobot() {
     const text = document.getElementById('final-preview').innerText.trim();
     const btn = document.getElementById('send-trigger');
 
-    if (!text) return;
+    // Only 'speaking' and 'challenge' require text
+    const requiresText = (selectedEmotion === 'speaking' || selectedEmotion === 'challenge');
+    if (requiresText && !text) return;
 
     btn.disabled = true;
     statusMessage("Sending to Robot...", "normal");
@@ -217,12 +227,12 @@ async function sendToRobot() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                text: text,
+                text: text || "",  // Send empty string if no text
                 emotion: selectedEmotion
             })
         });
         const result = await response.json();
-        
+
         if (result.status) {
             addLog(`✓ Sent to Robot [${selectedEmotion.toUpperCase()}]`);
             statusMessage("Sent Successfully!", "success");
