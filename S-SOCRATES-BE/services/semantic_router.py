@@ -53,31 +53,67 @@ class SemanticRouter:
     def get_best_match(self, user_text: str, threshold: float = 0.75):
         if not self.model or not self.preset_qs or len(self.preset_vectors) == 0:
             return None
-            
+
         # Vectorize input
         user_vector = self.model.encode([user_text])[0]
-        
+
         # Calculate Cosine Similarity
         # Dot product / (norm(a) * norm(b))
         dots = np.dot(self.preset_vectors, user_vector)
         norms_presets = np.linalg.norm(self.preset_vectors, axis=1)
         norm_user = np.linalg.norm(user_vector)
-        
+
         # Chống chia cho 0
         if norm_user == 0:
             return None
-            
+
         similarities = dots / (norms_presets * norm_user)
-        
+
         best_idx = np.argmax(similarities)
         best_score = similarities[best_idx]
-        
+
         log.debug(f"Độ Semantic Match cao nhất: {best_score:.3f} (Câu: '{self.preset_qs[best_idx]}')")
-        
+
         if best_score >= threshold:
             log.info(f"KHỚP VỚI CÂU MẪU (Độ chính xác: {best_score:.2f}) -> Bỏ qua AI, báo đáp án cứng!")
             return self.preset_as[best_idx]
-            
+
         return None
+
+    def get_top_candidates(self, user_text: str, top_k: int = 5):
+        """
+        Trả về top K preset candidates với scores.
+        Returns: List[dict] với format {"question": str, "answer": str, "score": float}
+        """
+        if not self.model or not self.preset_qs or len(self.preset_vectors) == 0:
+            return []
+
+        # Vectorize input
+        user_vector = self.model.encode([user_text])[0]
+
+        # Calculate Cosine Similarity
+        dots = np.dot(self.preset_vectors, user_vector)
+        norms_presets = np.linalg.norm(self.preset_vectors, axis=1)
+        norm_user = np.linalg.norm(user_vector)
+
+        # Chống chia cho 0
+        if norm_user == 0:
+            return []
+
+        similarities = dots / (norms_presets * norm_user)
+
+        # Lấy top K indices theo score cao nhất
+        top_indices = np.argsort(similarities)[::-1][:top_k]
+
+        candidates = []
+        for idx in top_indices:
+            candidates.append({
+                "question": self.preset_qs[idx],
+                "answer": self.preset_as[idx],
+                "score": float(similarities[idx])
+            })
+
+        log.info(f"Tìm được {len(candidates)} preset candidates (top score: {candidates[0]['score']:.2f})")
+        return candidates
 
 semantic_router = SemanticRouter()

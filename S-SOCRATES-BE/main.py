@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from services.stt_service import process_stt_request
 from services.chat_orchestrator import process_chat_message
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
+from services.semantic_router import semantic_router
 
 # =========================
 # FastAPI Configuration
@@ -68,3 +69,30 @@ async def text_to_speech(req: TTSRequest, background_tasks: BackgroundTasks):
 async def list_vi_voices():
     voices = [{"Name": v, "Locale": "vi-VN"} for v in CHIRP3_HD_VOICES]
     return {"voices": voices}
+
+@app.post("/process-audio")
+async def process_audio(file: UploadFile = File(...)):
+    """
+    Robot endpoint: nhận audio từ robot, trả về transcript + preset candidates.
+    Flow:
+    1. STT (Deepgram) để có transcript
+    2. Semantic Router để tìm top preset candidates
+    3. Trả về transcript + candidates với scores
+    """
+    try:
+        # Step 1: STT
+        transcript = process_stt_request(file)
+
+        # Step 2: Get top preset candidates
+        candidates = semantic_router.get_top_candidates(transcript, top_k=5)
+
+        # Step 3: Return result
+        return {
+            "transcript": transcript,
+            "candidates": candidates
+        }
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}
+
