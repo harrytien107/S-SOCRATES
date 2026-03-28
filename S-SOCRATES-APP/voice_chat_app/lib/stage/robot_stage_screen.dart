@@ -26,9 +26,10 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
   // ── Services ──────────────────────────────────────────────────
   final RobotController _robotController = RobotController();
 
-  // ── Mock / demo ────────────────────────────────────────────────
-  bool _isMockMode = true;
-  int _mockSubtitleIndex = 0;
+  // ── Mock / demo (removed) ──────────────────────────────────────
+
+  // ── Audio Capture State ────────────────────────────────────────
+  bool _isRecording = false;
 
   // ── Hint "tap" label ──────────────────────────────────────────
   bool _showHint = true;
@@ -46,13 +47,13 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
 
   void _setupController() {
     _robotController.state.addListener(() {
-      if (mounted && !_isMockMode) {
+      if (mounted) {
         setState(() => _uiState = _robotController.state.value);
       }
     });
 
     _robotController.currentMessage.addListener(() {
-      if (mounted && !_isMockMode) {
+      if (mounted) {
         final text = _robotController.currentMessage.value;
         setState(() {
           _subtitle = text.length > 80 ? '${text.substring(0, 80)}…' : text;
@@ -61,30 +62,41 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
       }
     });
 
-    if (!_isMockMode) {
-      _robotController.startPolling();
-    }
+    _robotController.startPolling();
   }
 
   // ── Tap orb ───────────────────────────────────────────────────
-  void _handleOrbTap() {
+  Future<void> _handleOrbTap() async {
     setState(() => _showHint = false);
-    if (_isMockMode) {
-      _cycleMockState();
+    
+    // Nếu đang nói hoặc suy nghĩ thì bỏ qua
+    if (_uiState == RobotUiState.thinking || _uiState == RobotUiState.speaking || _uiState == RobotUiState.uploading) {
+        return;
     }
-    // Real tap to listen is disabled as per "Không dùng voice input"
+
+    if (!_isRecording) {
+      await _startRecording();
+    } else {
+      await _stopRecording();
+    }
   }
 
-  void _cycleMockState() {
-    final states = RobotUiState.values;
-    final next = states[(states.indexOf(_uiState) + 1) % states.length];
+  Future<void> _startRecording() async {
     setState(() {
-      _uiState = next;
-      _subtitle = next == RobotUiState.speaking
-          ? kMockSubtitles[_mockSubtitleIndex++ % kMockSubtitles.length]
-          : null;
-      _errorMessage = next == RobotUiState.error ? kMockErrorMessage : null;
+        _isRecording = true;
+        _uiState = RobotUiState.listening;
     });
+    // Gọi controller để bắt đầu ghi âm
+    await _robotController.startRecordingAudio();
+  }
+
+  Future<void> _stopRecording() async {
+    setState(() {
+        _isRecording = false;
+        _uiState = RobotUiState.uploading;
+    });
+    // Gọi controller để dừng ghi âm và gửi backend
+    await _robotController.stopRecordingAndProcess();
   }
 
   @override
@@ -124,10 +136,6 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
 
           // Settings icon — top right, very subtle
           Positioned(top: 10, right: 12, child: _settingsButton()),
-
-          // MOCK badge — top left
-          if (_isMockMode)
-            const Positioned(top: 12, left: 12, child: _MockBadge()),
         ],
       ),
     );
@@ -168,7 +176,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
           opacity: _showHint ? 1.0 : 0.0,
           duration: const Duration(milliseconds: 800),
           child: Text(
-            _isMockMode ? 'TAP TO CYCLE STATES' : 'POLLING LIVE COMMANDS...',
+            'POLLING LIVE COMMANDS...',
             style: TextStyle(
               color: Colors.white.withValues(alpha: 0.2),
               fontSize: 10,
@@ -257,32 +265,6 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            // Mock / Live toggle
-            Row(
-              children: [
-                const Text(
-                  'Demo mode',
-                  style: TextStyle(color: Colors.white54, fontSize: 12),
-                ),
-                const Spacer(),
-                Switch(
-                  value: _isMockMode,
-                  activeThumbColor: const Color(0xFF00B4FF),
-                  onChanged: (v) {
-                    setState(() {
-                      _isMockMode = v;
-                      if (_isMockMode) {
-                        _robotController.stopPolling();
-                        _uiState = RobotUiState.idle;
-                      } else {
-                        _robotController.startPolling();
-                      }
-                    });
-                    Navigator.of(ctx).pop();
-                  },
-                ),
-              ],
-            ),
           ],
         ),
         actions: [

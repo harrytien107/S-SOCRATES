@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 /// Trạng thái của AI robot trên sân khấu
-enum RobotUiState { idle, listening, thinking, speaking, challenge, error }
+enum RobotUiState { idle, listening, uploading, thinking, speaking, challenge, error }
 
 extension RobotUiStateX on RobotUiState {
   String get label {
@@ -10,6 +10,8 @@ extension RobotUiStateX on RobotUiState {
         return 'Sẵn sàng';
       case RobotUiState.listening:
         return 'Đang lắng nghe';
+      case RobotUiState.uploading:
+        return 'Đang gửi...';
       case RobotUiState.thinking:
         return 'Đang suy nghĩ';
       case RobotUiState.speaking:
@@ -27,6 +29,8 @@ extension RobotUiStateX on RobotUiState {
         return const Color(0xFF00B4FF);
       case RobotUiState.listening:
         return const Color(0xFF00FFCC);
+      case RobotUiState.uploading:
+        return const Color(0xFF00E0FF);
       case RobotUiState.thinking:
         return const Color(0xFF4488FF);
       case RobotUiState.speaking:
@@ -49,6 +53,8 @@ extension RobotUiStateX on RobotUiState {
         return 0.20;
       case RobotUiState.listening:
         return 0.55;
+      case RobotUiState.uploading:
+        return 0.65;
       case RobotUiState.thinking:
         return 0.80;
       case RobotUiState.speaking:
@@ -67,6 +73,8 @@ extension RobotUiStateX on RobotUiState {
         return 0.32;
       case RobotUiState.listening:
         return 0.75;
+      case RobotUiState.uploading:
+        return 0.95;
       case RobotUiState.thinking:
         return 1.20;
       case RobotUiState.speaking:
@@ -85,6 +93,8 @@ extension RobotUiStateX on RobotUiState {
         return 0.40;
       case RobotUiState.listening:
         return 1.20;
+      case RobotUiState.uploading:
+        return 1.40;
       case RobotUiState.thinking:
         return 0.90;
       case RobotUiState.speaking:
@@ -98,16 +108,3 @@ extension RobotUiStateX on RobotUiState {
 
   bool get showSubtitle => this == RobotUiState.speaking || this == RobotUiState.challenge;
 }
-
-/// Mock subtitles cho demo mode
-const List<String> kMockSubtitles = [
-  'Thưa Giáo sư, em không over-thinking đâu, nhưng...',
-  'Quan điểm này rất hay, cơ mà em thấy hơi lấn cấn ạ.',
-  'Nếu AI làm nhanh hơn con người, vậy điều gì còn là bản sắc?',
-  'Bằng chứng nào cho thấy điều đó là đúng hoàn toàn?',
-  'Đây là một paradox thú vị — và tôi không đồng ý.',
-  'Logic này bắt đầu lung lay khi áp vào thực tế.',
-];
-
-const String kMockErrorMessage =
-    'Mất kết nối backend. Kiểm tra IP và thử lại.';

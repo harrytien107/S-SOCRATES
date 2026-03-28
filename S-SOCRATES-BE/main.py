@@ -48,6 +48,9 @@ class RobotCommand(BaseModel):
 # In a real app, use a Queue or Redis. For the talkshow demo, the latest command is enough.
 _latest_robot_command = None
 
+# Global storage for the latest transcript (from Robot -> Operator)
+_latest_transcript = None
+
 # =========================
 # Endpoints
 # =========================
@@ -90,15 +93,27 @@ async def list_vi_voices():
 
 @app.post("/process-audio")
 async def process_audio(file: UploadFile = File(...)):
+    global _latest_transcript
     try:
         transcript = process_stt_request(file)
         candidates = semantic_router.get_top_matches(transcript)
-        return {
+        _latest_transcript = {
             "transcript": transcript,
             "candidates": candidates
         }
+        return _latest_transcript
     except Exception as e:
         return {"error": str(e)}
+        
+@app.get("/latest-transcript")
+async def get_latest_transcript():
+    global _latest_transcript
+    if _latest_transcript:
+        # Operator UI polls this. Only return once, then clear, so UI doesn't re-process duplicate
+        res = _latest_transcript
+        _latest_transcript = None
+        return res
+    return None
 
 @app.post("/operator-decision")
 async def operator_decision(req: DecisionRequest):

@@ -1,17 +1,24 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:record/record.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:voice_chat_app/services/api_service.dart';
 import 'package:voice_chat_app/services/api_config.dart';
+import 'package:voice_chat_app/services/agent_api.dart';
 import 'package:voice_chat_app/services/tts_service.dart';
 import 'package:voice_chat_app/stage/robot_ui_state.dart';
 
 class RobotController {
   final ValueNotifier<RobotUiState> state = ValueNotifier(RobotUiState.idle);
   final ValueNotifier<String> currentMessage = ValueNotifier('');
+  final ValueNotifier<Map<String, dynamic>?> latestTranscriptResult = ValueNotifier(null);
   
   Timer? _pollingTimer;
   String? _lastCommandText;
   bool _isProcessing = false;
+
+  final AudioRecorder _audioRecorder = AudioRecorder();
+  final AgentAPI _agentAPI = AgentAPI();
 
   void startPolling() {
     _pollingTimer?.cancel();
@@ -23,6 +30,51 @@ class RobotController {
     _pollingTimer?.cancel();
     TtsService.stop();
     debugPrint('Robot Polling Stopped');
+  }
+
+  Future<void> startRecordingAudio() async {
+    try {
+      if (await _audioRecorder.hasPermission()) {
+        final dir = await getApplicationDocumentsDirectory();
+        final path = '${dir.path}/robot_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
+        
+        await _audioRecorder.start(
+          const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
+          path: path,
+        );
+        debugPrint('Started recording: $path');
+      } else {
+        debugPrint('Audio permission denied.');
+        state.value = RobotUiState.error;
+      }
+    } catch (e) {
+      debugPrint('Start recording error: $e');
+      state.value = RobotUiState.error;
+    }
+  }
+
+  Future<void> stopRecordingAndProcess() async {
+    try {
+      final path = await _audioRecorder.stop();
+      if (path != null) {
+        debugPrint('Stopped recording, path: $path');
+        
+        // Gửi lên backend để xử lý (Deepgram STT & Router)
+        final result = await _agentAPI.processAudio(path);
+        latestTranscriptResult.value = result;
+        
+        // Sau khi xử lý xong, chuyển về thinking -> idle (phần logic sendToRobot bên operator sẽ quyết định, không auto nói nữa trừ khi flow live auto).
+        state.value = RobotUiState.thinking;
+        await Future.delayed(const Duration(milliseconds: 500));
+        state.value = RobotUiState.idle;
+
+      } else {
+        state.value = RobotUiState.idle;
+      }
+    } catch (e) {
+      debugPrint('Stop recording error: $e');
+      state.value = RobotUiState.error;
+    }
   }
 
   Future<void> _poll() async {
@@ -78,7 +130,9 @@ class RobotController {
 
   void dispose() {
     stopPolling();
+    _audioRecorder.dispose();
     state.dispose();
     currentMessage.dispose();
+    latestTranscriptResult.dispose();
   }
 }

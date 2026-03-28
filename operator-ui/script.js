@@ -55,10 +55,36 @@ function checkConnection() {
     fetch(`${base}/`).then(() => {
         document.getElementById('online-dot').classList.add('active');
         addLog("System Online.");
+        
+        // Start polling for transcripts once connected
+        if (!window.transcriptPollInterval) {
+            window.transcriptPollInterval = setInterval(pollTranscript, 2000);
+        }
     }).catch(() => {
         document.getElementById('online-dot').classList.remove('active');
         addLog("Backend Offline.");
+        if (window.transcriptPollInterval) {
+            clearInterval(window.transcriptPollInterval);
+            window.transcriptPollInterval = null;
+        }
     });
+}
+
+async function pollTranscript() {
+    const base = document.getElementById('api-base').value;
+    try {
+        const response = await fetch(`${base}/latest-transcript`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data && data.transcript) {
+                currentData = data;
+                displayWorkflow(data);
+                addLog("Received new voice input from Robot.");
+            }
+        }
+    } catch (err) {
+        // Ignore silent polling errors
+    }
 }
 
 async function handleFileUpload(input) {
@@ -130,8 +156,8 @@ function updateSendButton() {
 
 async function useAI() {
     const base = document.getElementById('api-base').value;
-    if (!currentData) {
-        alert("No transcript for AI.");
+    if (!currentData || !currentData.transcript) {
+        // Disabled logic via updateSendButton or similar, no alert
         return;
     }
     
