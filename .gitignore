@@ -46,4 +46,9 @@ Thumbs.db
 *.log
 push_output.txt
 
+# Project Configs
 **/project-*.json
+
+# IDE / Editor Settings
+.idea/
+.vscode/
