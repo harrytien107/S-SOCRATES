@@ -18,7 +18,7 @@ class ApiService {
     try {
       final response = await http.get(
         Uri.parse('${ApiConfig.baseUrl}/latest-command'),
-      ).timeout(const Duration(seconds: 10));
+      ).timeout(const Duration(seconds: 6));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
