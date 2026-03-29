@@ -108,4 +108,48 @@ class AgentAPI {
       return null;
     }
   }
+
+  /// Poll trạng thái Mic từ Operator (idle / listening / processing)
+  Future<String> getMicStatus() async {
+    try {
+      final response = await http
+          .get(Uri.parse('${ApiConfig.baseUrl}/robot/mic-status'))
+          .timeout(const Duration(seconds: 3));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return data['mic_status'] ?? 'idle';
+      }
+      return 'idle';
+    } catch (e) {
+      debugPrint('AgentAPI getMicStatus error: $e');
+      return 'idle';
+    }
+  }
+
+  /// Báo cho Server biết App đã upload xong audio, reset chu kỳ
+  Future<void> notifyMicDone() async {
+    try {
+      await http
+          .post(Uri.parse('${ApiConfig.baseUrl}/robot/mic-done'))
+          .timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('AgentAPI notifyMicDone error: $e');
+    }
+  }
+
+  /// Đồng bộ ngược: App báo cho Backend khi người dùng chạm Orb thủ công
+  Future<void> sendMicControl(String action) async {
+    try {
+      await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/operator/mic-control'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'action': action}),
+          )
+          .timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('AgentAPI sendMicControl error: $e');
+    }
+  }
 }

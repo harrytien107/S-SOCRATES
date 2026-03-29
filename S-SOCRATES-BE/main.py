@@ -2,6 +2,7 @@ import time
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from typing import Optional
 from dotenv import load_dotenv
 
 from services.stt_service import process_stt_request
@@ -65,6 +66,10 @@ GLOBAL_AUDIO_CONFIG = {
     "stt_language": "vi",
     "gemini_model": "models/gemini-2.0-flash",
 }
+
+# Remote Mic Control – Cột đèn giao thông giữa Operator và App
+# idle = ngủ, listening = đang thu âm, processing = đang xử lý STT
+_robot_mic_status = "idle"
 
 # =========================
 # Endpoints
@@ -139,6 +144,41 @@ async def update_configs(req: AudioConfigRequest):
     switch_gemini_model(req.gemini_model)
     
     return {"status": "Config updated", "config": GLOBAL_AUDIO_CONFIG}
+
+# =========================
+# Remote Mic Control Endpoints
+# =========================
+
+class MicControlRequest(BaseModel):
+    action: str  # "start" hoặc "stop"
+
+@app.post("/operator/mic-control")
+async def mic_control(req: MicControlRequest):
+    """Đạo diễn (Operator) bấm nút BẬT/TẮT Mic Robot từ xa."""
+    global _robot_mic_status
+    if req.action == "start":
+        _robot_mic_status = "listening"
+        return {"status": "Robot mic activated", "mic_status": _robot_mic_status}
+    elif req.action == "stop":
+        _robot_mic_status = "processing"
+        return {"status": "Robot mic stopped, waiting for audio upload", "mic_status": _robot_mic_status}
+    elif req.action == "cancel":
+        _robot_mic_status = "canceled"
+        return {"status": "Robot mic canceled, throwing away audio", "mic_status": _robot_mic_status}
+    else:
+        return {"error": "Invalid action. Use 'start', 'stop', or 'cancel'."}
+
+@app.get("/robot/mic-status")
+async def get_mic_status():
+    """App điện thoại poll mỗi 1 giây để biết Đạo diễn muốn nó làm gì."""
+    return {"mic_status": _robot_mic_status}
+
+@app.post("/robot/mic-done")
+async def mic_done():
+    """App gọi sau khi đã upload xong audio, báo hiệu hoàn tất chu kỳ."""
+    global _robot_mic_status
+    _robot_mic_status = "idle"
+    return {"status": "Mic cycle complete", "mic_status": _robot_mic_status}
 
 # =========================
 # Orchestration Endpoints
@@ -227,13 +267,8 @@ async def send_to_robot(req: RobotCommand):
 
 @app.get("/robot-command")
 async def get_robot_command():
-    global _latest_robot_command
-    if _latest_robot_command:
-        # Consume the command so it doesn't repeat
-        cmd = _latest_robot_command
-        _latest_robot_command = None
-        return cmd
-    return None
+    # Frontend deduplicates via timestamp, do not destroy the command.
+    return _latest_robot_command
 
 @app.get("/latest-command")
 async def get_latest_command():

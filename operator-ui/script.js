@@ -2,6 +2,98 @@ let currentData = null;
 let selectedEmotion = 'neutral';
 let lastLogMsg = "";
 
+// Remote Mic Control State
+let isMicActive = false;
+let micTimerInterval = null;
+let micStartTime = null;
+
+function formatTimer(ms) {
+    const totalSec = Math.floor(ms / 1000);
+    const min = String(Math.floor(totalSec / 60)).padStart(2, '0');
+    const sec = String(totalSec % 60).padStart(2, '0');
+    return `${min}:${sec}`;
+}
+
+// === Gửi lệnh Mic tới Backend ===
+async function _sendMicAction(action) {
+    const base = document.getElementById('api-base').value;
+    try {
+        await fetch(`${base}/operator/mic-control`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action })
+        });
+        return true;
+    } catch (err) {
+        addLog(`⚠️ Không gửi được lệnh mic: ${action}`);
+        return false;
+    }
+}
+
+// === QUICK SEND — Gửi emotion trực tiếp qua /send-to-robot ===
+// Không cần bấm SEND TO BOT. Dùng kênh đã hoạt động tốt.
+async function quickSendEmotion(emo, btn) {
+    const base = document.getElementById('api-base').value;
+
+    // Highlight nút được chọn  
+    setEmotion(emo, btn, false);
+
+    try {
+        const response = await fetch(`${base}/send-to-robot`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: '', emotion: emo })
+        });
+        const result = await response.json();
+        if (result.status) {
+            if (emo === 'listening') {
+                addLog(`🎙️ → Robot đang LẮNG NGHE (mic bật thật)`);
+            } else if (emo === 'uploading') {
+                addLog(`📤 → Robot đang GỬI audio lên server...`);
+            } else {
+                addLog(`✓ Sent emotion: ${emo}`);
+            }
+        } else {
+            throw new Error("Queue failed");
+        }
+    } catch (err) {
+        addLog(`⚠️ Không gửi được lệnh ${emo}`);
+    }
+}
+
+// === HỦY BỎ (nếu cần gọi từ logic khác) ===
+async function cancelRobotMic() {
+    if (!isMicActive) return;
+    if (await _sendMicAction('cancel')) {
+        isMicActive = false;
+        addLog(`❌ Đã HỦY thu âm. Dữ liệu không được gửi.`);
+    }
+}
+
+// === ĐỒNG BỘ TRẠNG THÁI TỪ APP (khi App chạm Orb thủ công) ===
+let _lastSyncedStatus = 'idle';
+
+async function syncMicStatusFromBackend() {
+    const base = document.getElementById('api-base').value;
+    try {
+        const resp = await fetch(`${base}/robot/mic-status`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const status = data.mic_status || 'idle';
+        if (status === _lastSyncedStatus) return;
+        _lastSyncedStatus = status;
+
+        if (status === 'listening' && !isMicActive) {
+            isMicActive = true;
+            micStartTime = Date.now();
+            addLog(`🎙️ [Sync] App tự bật Mic.`);
+        } else if (status !== 'listening' && isMicActive) {
+            isMicActive = false;
+            if (status === 'processing') addLog(`📤 [Sync] App đang gửi audio lên Server.`);
+        }
+    } catch (_) {}
+}
+
 window.onload = () => {
     const saved = localStorage.getItem('socrates_api_base');
     if (saved) document.getElementById('api-base').value = saved;
@@ -12,8 +104,11 @@ window.onload = () => {
     preview.addEventListener('keydown', (e) => e.preventDefault());
     
     checkConnection();
-    updateSendButton(); // Sync initial state
+    updateSendButton();
     addLog("Console Ready.");
+    
+    // Poll trạng thái Mic từ Backend mỗi 2 giây để đồng bộ khi App chạm Orb
+    setInterval(syncMicStatusFromBackend, 2000);
 };
 
 function addLog(msg) {
@@ -29,9 +124,27 @@ function addLog(msg) {
     
     logContainer.insertBefore(entry, logContainer.firstChild);
 
-    // Keep only last 20 logs
-    if (logContainer.children.length > 20) {
+    const maxLogs = logContainer.classList.contains('log-expanded') ? 100 : 20;
+    while (logContainer.children.length > maxLogs) {
         logContainer.removeChild(logContainer.lastChild);
+    }
+}
+
+let _logExpanded = false;
+function toggleLogExpand() {
+    _logExpanded = !_logExpanded;
+    const container = document.getElementById('log-container');
+    const btn = document.getElementById('expand-log-btn');
+    if (_logExpanded) {
+        container.classList.add('log-expanded');
+        container.style.maxHeight = '500px';
+        container.style.minHeight = '300px';
+        btn.textContent = '⤡ COLLAPSE';
+    } else {
+        container.classList.remove('log-expanded');
+        container.style.maxHeight = '';
+        container.style.minHeight = '';
+        btn.textContent = '⤢ EXPAND';
     }
 }
 
@@ -331,6 +444,21 @@ function setEmotion(emo, btn, explicit = true) {
     });
     if (explicit) addLog(`Emotion: ${emo}`);
     updateSendButton();
+}
+
+async function setEmotionAndRecord(btn) {
+    // Bước 1: Đặt emotion listening cho Orb 3D
+    setEmotion('listening', btn, true);
+
+    // Bước 2: Nếu đang trong trạng thái listening rồi thì TẮT (toggle)
+    if (isMicActive) {
+        await toggleRobotMic(); // Đây là nút tắt
+        return;
+    }
+
+    // Bước 3: Bật mic thật qua cùng đường với nút BẬT MIC ROBOT
+    await toggleRobotMic();
+    addLog("🎙️ Listening thật — Mic đã bật kèm Emotion listening.");
 }
 
 async function sendToRobot() {

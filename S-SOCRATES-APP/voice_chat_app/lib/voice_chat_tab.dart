@@ -38,7 +38,6 @@ class _VoiceChatTabState extends State<VoiceChatTab>
   Timer? _silenceTimer;
   static const double _silenceThreshold = -40.0; // dB
   static const int _silenceDurationMs = 2000;   // 2 seconds of silence
-
   final int _retryCount = 0;
   DateTime? _sessionStartTime;
   static const int _maxRetries = 3;
