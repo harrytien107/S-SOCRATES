@@ -23,6 +23,8 @@
     <main>
         <!-- Column 1: Live Input -->
         <section class="panel">
+
+
             <div class="panel-header">Live Guest Transcript</div>
             <div class="scroll-area">
                 <div class="transcript-container" id="transcript-box">
@@ -67,7 +69,8 @@
                 <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">SET ROBOT EMOTION</div>
                 <div class="emotion-grid">
                     <button class="emotion-btn active" data-emotion="neutral" onclick="setEmotion('neutral', this)">Neutral</button>
-                    <button class="emotion-btn" data-emotion="listening" onclick="setEmotion('listening', this)">Listening</button>
+                    <button class="emotion-btn" data-emotion="listening" onclick="quickSendEmotion('listening', this)" style="background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.1)); border-color: rgba(16,185,129,0.4);">🎙️ Listening</button>
+                    <button class="emotion-btn" data-emotion="uploading" onclick="quickSendEmotion('uploading', this)" style="background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(217,119,6,0.1)); border-color: rgba(251,191,36,0.4);">📤 Đang gửi</button>
                     <button class="emotion-btn" data-emotion="speaking" onclick="setEmotion('speaking', this)">Speaking</button>
                     <button class="emotion-btn" data-emotion="challenge" onclick="setEmotion('challenge', this)">Challenge</button>
                     <button class="emotion-btn" data-emotion="no_voice" onclick="setEmotion('no_voice', this)">No Voice Notice</button>
@@ -79,7 +82,10 @@
                 </button>
                 <div id="last-sent-status">Waiting for response...</div>
                 
-                <div class="panel-header" style="margin-top: 1rem; padding: 4px 0; border: none; font-size: 0.65rem;">System Logs</div>
+                <div class="panel-header" style="margin-top: 1rem; padding: 4px 0; border: none; font-size: 0.65rem; display: flex; justify-content: space-between; align-items: center;">
+                    System Logs
+                    <button class="settings-btn" id="expand-log-btn" onclick="toggleLogExpand()" style="font-size: 0.6rem; padding: 2px 8px;">⤢ EXPAND</button>
+                </div>
                 <div id="log-container" class="log-panel"></div>
             </div>
         </section>

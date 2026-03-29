@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -15,21 +16,29 @@ class RobotController {
   final ValueNotifier<Map<String, dynamic>?> latestTranscriptResult = ValueNotifier(null);
   
   Timer? _pollingTimer;
+  Timer? _micPollTimer;
   String? _lastCommandSignature;
   bool _isProcessing = false;
+  bool _isMicBusy = false;
   int _pollFailureCount = 0;
+  String _lastMicStatus = 'idle';
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AgentAPI _agentAPI = AgentAPI();
 
   void startPolling() {
     _pollingTimer?.cancel();
-    _pollingTimer = Timer.periodic(const Duration(seconds: 1), (_) => _poll());
-    debugPrint('Robot Polling Started');
+    _micPollTimer?.cancel();
+    // Timer 1: Poll robot-command (TTS, emotion...) — 500ms
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _pollCommands());
+    // Timer 2: Poll Mic từ Đạo diễn — 300ms, chạy SONG SONG, ĐỘC LẬP
+    _micPollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) => _pollMicStatus());
+    debugPrint('Robot Polling Started (command 500ms + mic 300ms)');
   }
 
   void stopPolling() {
     _pollingTimer?.cancel();
+    _micPollTimer?.cancel();
     TtsService.stop();
     debugPrint('Robot Polling Stopped');
   }
@@ -44,9 +53,23 @@ class RobotController {
     _pollFailureCount = 0;
   }
 
+  // ============================================
+  // Audio Recording
+  // ============================================
   Future<void> startRecordingAudio() async {
+    _remoteLog('startRecordingAudio() CALLED');
     try {
-      if (await _audioRecorder.hasPermission()) {
+      // Dọn sạch session cũ nếu recorder đang bận
+      if (await _audioRecorder.isRecording()) {
+        _remoteLog('recorder WAS busy — stopping first');
+        await _audioRecorder.stop();
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
+
+      final hasPerm = await _audioRecorder.hasPermission();
+      _remoteLog('hasPermission = $hasPerm');
+
+      if (hasPerm) {
         final dir = await getApplicationDocumentsDirectory();
         final path = '${dir.path}/robot_audio_${DateTime.now().millisecondsSinceEpoch}.m4a';
         
@@ -54,28 +77,59 @@ class RobotController {
           const RecordConfig(encoder: AudioEncoder.aacLc, bitRate: 128000),
           path: path,
         );
-        debugPrint('Started recording: $path');
+
+        final isRec = await _audioRecorder.isRecording();
+        _remoteLog('Recording started! isRecording=$isRec path=$path');
       } else {
-        debugPrint('Audio permission denied.');
-        state.value = RobotUiState.error;
+        _remoteLog('PERMISSION DENIED — nhưng KHÔNG đổi state');
+        // KHÔNG set state = error — để screen tự xử lý
       }
     } catch (e) {
-      debugPrint('Start recording error: $e');
-      state.value = RobotUiState.error;
+      _remoteLog('ERROR in startRecordingAudio: $e');
+      // KHÔNG set state = error — tránh cascade
+    }
+  }
+
+  // Remote debug log — gửi HTTP lên backend để ta thấy trên server console
+  void _remoteLog(String msg) {
+    debugPrint('📱 $msg');
+    try {
+      http.post(
+        Uri.parse('${ApiConfig.baseUrl}/robot/mic-done'),
+        headers: {'Content-Type': 'application/json'},
+        body: '{"debug_log": "$msg"}',
+      );
+    } catch (_) {}
+  }
+
+  Future<void> cancelRecording() async {
+    try {
+      await _audioRecorder.stop();
+      state.value = RobotUiState.idle;
+      debugPrint('Canceled recording and reset state.');
+    } catch (e) {
+      debugPrint('Cancel recording error: $e');
     }
   }
 
   Future<void> stopRecordingAndProcess() async {
     try {
+      // ✅ LUÔN CHUYỂN SANG ĐANG GỬI TRƯỚC ĐỂ UI 3D CẬP NHẬT NGAY LẬP TỨC
+      state.value = RobotUiState.uploading;
+      
       final path = await _audioRecorder.stop();
       if (path == null) {
-        state.value = RobotUiState.idle;
+        _remoteLog('stopRecordingAndProcess failed: path is null (did mic actually start?)');
+        
+        // Hiện giả lập "Đang gửi" 1.5s để user bên Web biết điện thoại có nhận lệnh
+        await Future.delayed(const Duration(milliseconds: 1500));
+        
+        currentMessage.value = 'Chưa ghi được âm thanh. Hãy thử lại.';
+        state.value = RobotUiState.noVoice; // show a clear visual indicator that it tried
         return;
       }
 
       debugPrint('Stopped recording, path: $path');
-
-      state.value = RobotUiState.uploading;
 
       final result = await _agentAPI.processAudio(path);
       latestTranscriptResult.value = result;
@@ -90,14 +144,75 @@ class RobotController {
         return;
       }
 
-      state.value = RobotUiState.thinking; // giữ nguyên ở đây
+      state.value = RobotUiState.thinking;
     } catch (e) {
       debugPrint('Stop recording error: $e');
       state.value = RobotUiState.error;
     }
   }
 
-  Future<void> _poll() async {
+  // ============================================
+  // Manual Tap — Đồng bộ ngược lên Backend
+  // ============================================
+  Future<void> manualStartRecording() async {
+    // 1. Báo Backend: "Tôi tự bật mic"
+    await _agentAPI.sendMicControl('start');
+    // 2. Cập nhật local để poll không trigger lần nữa
+    _lastMicStatus = 'listening';
+    // 3. Bật mic thật
+    state.value = RobotUiState.listening;
+    await startRecordingAudio();
+  }
+
+  Future<void> manualStopRecording() async {
+    // 1. Báo Backend: "Tôi tự tắt mic và gửi audio"
+    await _agentAPI.sendMicControl('stop');
+    // 2. Cập nhật local để poll không trigger lần nữa
+    _lastMicStatus = 'processing';
+    // 3. Tắt mic + upload
+    await stopRecordingAndProcess();
+    // 4. Báo hoàn tất
+    await _agentAPI.notifyMicDone();
+  }
+
+  // ============================================
+  // MIC POLL — Chạy hoàn toàn ĐỘC LẬP
+  // Không bị _isProcessing hay TTS chặn.
+  // ============================================
+  Future<void> _pollMicStatus() async {
+    if (_isMicBusy) return;
+    
+    try {
+      final status = await _agentAPI.getMicStatus();
+      if (status == _lastMicStatus) return;
+
+      final prev = _lastMicStatus;
+      _lastMicStatus = status;
+      debugPrint('🎛️ Mic status: $prev → $status');
+
+      _isMicBusy = true;
+
+      if (status == 'listening' && prev != 'listening') {
+        state.value = RobotUiState.listening;
+        await startRecordingAudio();
+      } else if (status == 'processing' && prev == 'listening') {
+        await stopRecordingAndProcess();
+        await _agentAPI.notifyMicDone();
+      } else if (status == 'canceled' && prev == 'listening') {
+        await cancelRecording();
+        await _agentAPI.notifyMicDone();
+      }
+
+      _isMicBusy = false;
+    } catch (err) {
+      _isMicBusy = false;
+    }
+  }
+
+  // ============================================
+  // COMMAND POLL — Poll robot-command (TTS, emotion)
+  // ============================================
+  Future<void> _pollCommands() async {
     if (_isProcessing) return;
 
     debugPrint('Polling backend at: ${ApiConfig.baseUrl}');
@@ -114,7 +229,6 @@ class RobotController {
       }
     } else {
       _pollFailureCount += 1;
-      // Avoid flaky false alarms when one poll misses.
       if (_pollFailureCount >= 10 && isBackendReachable.value) {
         isBackendReachable.value = false;
         state.value = RobotUiState.error;
@@ -144,6 +258,9 @@ class RobotController {
         case 'listening':
           mappedState = RobotUiState.listening;
           break;
+        case 'uploading':
+          mappedState = RobotUiState.uploading;
+          break;
         case 'speaking':
           mappedState = RobotUiState.speaking;
           break;
@@ -154,12 +271,13 @@ class RobotController {
           mappedState = RobotUiState.noVoice;
           break;
         case 'error':
-          mappedState = RobotUiState.idle;
+          mappedState = RobotUiState.error;
           break;
         default:
           mappedState = RobotUiState.idle;
       }
 
+      // === NO VOICE ===
       if (emotion == 'no_voice') {
         currentMessage.value = text.isEmpty
             ? 'Không nhận được voice. Vui lòng nói lại.'
@@ -169,7 +287,23 @@ class RobotController {
         return;
       }
 
-      // speaking/challenge require text and trigger TTS.
+      // === LISTENING — Chỉ set state, screen sẽ tự bật mic ===
+      if (mappedState == RobotUiState.listening) {
+        debugPrint('🎙️ Command: LISTENING → set state (screen sẽ bật mic)');
+        state.value = RobotUiState.listening;
+        _isProcessing = false;  // Cho phép poll tiếp để nhận lệnh uploading
+        return;
+      }
+
+      // === UPLOADING — Chỉ set state, screen sẽ tự tắt mic + gửi ===
+      if (mappedState == RobotUiState.uploading) {
+        debugPrint('📤 Command: UPLOADING → set state (screen sẽ tắt mic + gửi)');
+        state.value = RobotUiState.uploading;
+        _isProcessing = false;  // PHẢI false để poll tiếp hoạt động
+        return;
+      }
+
+      // === SPEAKING / CHALLENGE — Phát TTS ===
       if (mappedState == RobotUiState.speaking || mappedState == RobotUiState.challenge) {
         if (text.isEmpty) {
           debugPrint('Skip speaking/challenge command because text is empty.');
@@ -195,6 +329,7 @@ class RobotController {
         return;
       }
 
+      // === Các emotion khác (neutral, error...) ===
       currentMessage.value = text;
       state.value = mappedState;
       debugPrint('State -> ${state.value}');

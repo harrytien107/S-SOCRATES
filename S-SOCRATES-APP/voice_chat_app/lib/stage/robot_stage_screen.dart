@@ -46,8 +46,38 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
 
   void _setupController() {
     _robotController.state.addListener(() {
-      if (mounted) {
-        setState(() => _uiState = _robotController.state.value);
+      if (!mounted) return;
+      final newState = _robotController.state.value;
+
+      // === LISTENING — Bật mic tự động ===
+      if (newState == RobotUiState.listening && !_isRecording) {
+        debugPrint('🎙️ [Auto] Remote command → bật mic');
+        setState(() {
+          _isRecording = true;
+          _uiState = RobotUiState.listening;
+        });
+        // Gọi startRecordingAudio nhưng KHÔNG cho nó thay đổi state
+        // (tránh cascade error → reset _isRecording)
+        _safeStartRecording();
+      }
+      // === UPLOADING — Tắt mic + gửi, KHÔNG check _isRecording ===
+      // Vì mic có thể đã bật bằng tap thủ công
+      else if (newState == RobotUiState.uploading) {
+        debugPrint('📤 [Auto] Remote command → tắt mic + gửi');
+        setState(() {
+          _isRecording = false;
+          _uiState = RobotUiState.uploading;
+        });
+        _robotController.stopRecordingAndProcess();
+      }
+      // Các state khác — chỉ sync UI
+      else {
+        setState(() {
+          _uiState = newState;
+          if (newState != RobotUiState.listening) {
+            _isRecording = false;
+          }
+        });
       }
     });
 
@@ -91,8 +121,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
         _isRecording = true;
         _uiState = RobotUiState.listening;
     });
-    // Gọi controller để bắt đầu ghi âm
-    await _robotController.startRecordingAudio();
+    await _robotController.manualStartRecording();
   }
 
   Future<void> _stopRecording() async {
@@ -100,8 +129,18 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
         _isRecording = false;
         _uiState = RobotUiState.uploading;
     });
-    // Gọi controller để dừng ghi âm và gửi backend
-    await _robotController.stopRecordingAndProcess();
+    await _robotController.manualStopRecording();
+  }
+
+  /// Bật mic an toàn từ remote command.
+  /// KHÔNG thay đổi state nếu lỗi (tránh cascade reset _isRecording).
+  Future<void> _safeStartRecording() async {
+    try {
+      await _robotController.startRecordingAudio();
+    } catch (e) {
+      debugPrint('⚠️ _safeStartRecording error: $e');
+      // KHÔNG set state = error ở đây — giữ nguyên listening
+    }
   }
 
   @override
