@@ -19,27 +19,24 @@ def get_deepgram_api_key() -> str:
     return api_key
 
 
-def transcribe_file(wav_path: str) -> str:
+def transcribe_file(wav_path: str, model: str = "nova-2", language: str = "vi") -> str:
     """
     Đọc file WAV từ disk, gửi lên Deepgram REST API, trả về transcript.
-    Dùng cho desktop app (ghi âm bằng sounddevice → lưu WAV → gọi hàm này).
+    model: Deepgram model (nova-2, nova-2-general, whisper-large, ...)
+    language: Mã ngôn ngữ (vi, en, ja, ...)
     """
     api_key = get_deepgram_api_key()
 
-    url = f"{DEEPGRAM_API_URL}?model=nova-2&language=vi&smart_format=true"
+    url = f"{DEEPGRAM_API_URL}?model={model}&language={language}&smart_format=true"
     headers = {
         "Authorization": f"Token {api_key}",
     }
     
-    # Deepgram can auto-detect the MIME type (including AAC/M4A from Flutter)
-    # So we don't strict it to audio/wav anymore.
-
-    log.info(f"Gửi file audio tới Deepgram API: {wav_path}")
+    log.info(f"Gửi file audio tới Deepgram API: {wav_path} (model={model}, lang={language})")
 
     with open(wav_path, "rb") as audio_file:
         audio_data = audio_file.read()
 
-    # Sử dụng httpx synchronous client (vì chạy trong QThread, không cần async)
     with httpx.Client(timeout=120.0) as client:
         response = client.post(url, headers=headers, content=audio_data)
         response.raise_for_status()
@@ -51,17 +48,15 @@ def transcribe_file(wav_path: str) -> str:
     log.info(f"Deepgram STT result: '{result}'")
     return result
 
-def process_stt_request(file: UploadFile) -> str:
-    log.info(f"--- Đã nhận file Upload '{file.filename}' từ Flutter ---")
+def process_stt_request(file: UploadFile, model: str = "nova-2", language: str = "vi") -> str:
+    log.info(f"--- Đã nhận file Upload '{file.filename}' từ Flutter (STT: {model}/{language}) ---")
     stt_start = time.time()
     temp_path = f"temp_{file.filename}"
     try:
-        # Lưu file upload xuống ổ cứng tạm thời
         with open(temp_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
             
-        # Gọi Deepgram STT đồng bộ
-        text = transcribe_file(temp_path)
+        text = transcribe_file(temp_path, model=model, language=language)
         
         stt_time = (time.time() - stt_start) * 1000
         log.info(f"STT Pipeline dịch xong. Thời gian trễ xử lý: {stt_time:.0f}ms")

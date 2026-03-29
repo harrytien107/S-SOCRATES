@@ -44,9 +44,12 @@
                     </div>
                 </div>
             </div>
-            <div style="padding: 1rem; border-top: 1px solid var(--border);">
-                <button class="ai-reflex-btn" onclick="useAI()">
-                    <span>✨ GENERATE AI RESPONSE (GEMINI)</span>
+            <div style="padding: 1rem; border-top: 1px solid var(--border); display: flex; gap: 8px;">
+                <button class="ai-reflex-btn" onclick="useAI()" style="flex: 1;">
+                    <span>🦙 AI (OLLAMA / QWEN)</span>
+                </button>
+                <button class="ai-reflex-btn gemini-btn" onclick="useGemini()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
+                    <span>💎 AI (GEMINI)</span>
                 </button>
             </div>
         </section>
@@ -84,20 +87,94 @@
 
     <!-- Settings Modal -->
     <div class="modal" id="settings-modal">
-        <div class="modal-content">
+        <div class="modal-content" style="max-width: 520px;">
             <div class="modal-header">
-                <h2 style="margin: 0; color: var(--cyan);">Settings</h2>
+                <h2 style="margin: 0; color: var(--cyan);">⚙ Settings</h2>
                 <button class="settings-btn" onclick="toggleModal(false)">✕</button>
             </div>
-            <div class="input-group">
-                <label>API BASE URL</label>
-                <input type="text" id="api-base" value="http://localhost:8000">
+
+            <!-- SYSTEM ROUTING -->
+            <div style="margin-bottom: 1rem;">
+                <div style="font-size: 0.65rem; font-weight: 700; color: var(--cyan); letter-spacing: 2px; margin-bottom: 8px;">SYSTEM ROUTING</div>
+                <div class="input-group">
+                    <label>API BASE URL</label>
+                    <input type="text" id="api-base" value="http://localhost:8000">
+                </div>
+                <div class="input-group">
+                    <label>TEST AUDIO UPLOAD (.WAV)</label>
+                    <input type="file" id="file-upload" accept="audio/wav" onchange="handleFileUpload(this)">
+                </div>
             </div>
-            <div class="input-group">
-                <label>TEST AUDIO UPLOAD (.WAV)</label>
-                <input type="file" id="file-upload" accept="audio/wav" onchange="handleFileUpload(this)">
+
+            <!-- AUDIO ENGINE PARAMETERS -->
+            <div style="border-top: 1px solid var(--border); padding-top: 1rem;">
+                <div style="font-size: 0.65rem; font-weight: 700; color: #8b5cf6; letter-spacing: 2px; margin-bottom: 12px;">🔊 AUDIO ENGINE PARAMETERS</div>
+                
+                <!-- TTS Voice -->
+                <div class="input-group">
+                    <label>🗣️ TTS VOICE (Chirp 3 HD)</label>
+                    <select id="cfg-tts-voice" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                        <option value="Aoede">Aoede (Nữ - Mặc định)</option>
+                        <option value="Kore">Kore (Nữ)</option>
+                        <option value="Leda">Leda (Nữ)</option>
+                        <option value="Zephyr">Zephyr (Nam)</option>
+                        <option value="Puck">Puck (Nam)</option>
+                        <option value="Charon">Charon (Nam)</option>
+                        <option value="Fenrir">Fenrir (Nam)</option>
+                        <option value="Orus">Orus (Nam)</option>
+                    </select>
+                </div>
+
+                <!-- TTS Speed -->
+                <div class="input-group">
+                    <label>⏱️ TTS SPEED: <span id="speed-display" style="color: var(--cyan); font-weight: 700;">1.0x</span></label>
+                    <input type="range" id="cfg-tts-speed" min="0.5" max="2.0" step="0.1" value="1.0"
+                        oninput="document.getElementById('speed-display').innerText = this.value + 'x'"
+                        style="width: 100%; accent-color: var(--cyan);">
+                    <div style="display: flex; justify-content: space-between; font-size: 0.6rem; color: var(--text-dim);">
+                        <span>🐢 0.5x</span><span>🏃 1.0x</span><span>🚀 2.0x</span>
+                    </div>
+                </div>
+
+                <!-- STT Model -->
+                <div class="input-group">
+                    <label>🎤 STT MODEL (Deepgram)</label>
+                    <select id="cfg-stt-model" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                        <option value="nova-2">Nova-2 (Nhanh nhất)</option>
+                        <option value="nova-2-general">Nova-2 General</option>
+                        <option value="whisper-large">Whisper Large (Chính xác nhất)</option>
+                    </select>
+                </div>
+
+                <!-- STT Language -->
+                <div class="input-group">
+                    <label>🌐 STT LANGUAGE</label>
+                    <select id="cfg-stt-language" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                        <option value="vi">🇻🇳 Tiếng Việt</option>
+                        <option value="en">🇺🇸 English</option>
+                        <option value="ja">🇯🇵 日本語</option>
+                        <option value="zh">🇨🇳 中文</option>
+                    </select>
+                </div>
             </div>
-            <button class="ai-reflex-btn" onclick="saveSettings()" style="background: var(--cyan); color: var(--bg-deep);">SAVE & RECONNECT</button>
+
+            <!-- LLM ENGINE PARAMETERS -->
+            <div style="border-top: 1px solid var(--border); padding-top: 1rem;">
+                <div style="font-size: 0.65rem; font-weight: 700; color: #4285f4; letter-spacing: 2px; margin-bottom: 12px;">🧠 LLM ENGINE PARAMETERS</div>
+                
+                <!-- Gemini Model -->
+                <div class="input-group">
+                    <label>💎 GEMINI MODEL</label>
+                    <select id="cfg-gemini-model" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid rgba(66, 133, 244, 0.4); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                        <option value="models/gemini-2.0-flash">Gemini 2.0 Flash (Nhanh nhất)</option>
+                        <option value="models/gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Nhẹ)</option>
+                        <option value="models/gemini-1.5-flash">Gemini 1.5 Flash</option>
+                        <option value="models/gemini-1.5-pro">Gemini 1.5 Pro (Thông minh nhất)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button class="ai-reflex-btn" onclick="saveSettings()" style="background: var(--cyan); color: var(--bg-deep); margin-top: 1rem;">💾 SAVE & RECONNECT</button>
         </div>
     </div>
 

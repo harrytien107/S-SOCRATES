@@ -74,17 +74,15 @@ def generate_speech_file(
     log.info(f"TTS file saved: {output_path} ({len(response.audio_content)} bytes)")
     return output_path
 
-def process_tts_request(text: str, voice: str, background_tasks: BackgroundTasks) -> FileResponse:
-    log.info("Khởi động TTS Pipeline (Google Cloud Chirp 3 HD)...")
+def process_tts_request(text: str, voice: str, background_tasks: BackgroundTasks, speaking_rate: float = 1.0) -> FileResponse:
+    log.info(f"Khởi động TTS Pipeline (Google Cloud Chirp 3 HD) voice={voice}, rate={speaking_rate}...")
     tts_start = time.time()
     output_path = f"temp_tts_{int(time.time() * 1000)}.mp3"
     
-    # Gọi sang Google Cloud TTS
-    generate_speech_file(text, output_path, voice=voice)
+    generate_speech_file(text, output_path, voice=voice, speaking_rate=speaking_rate)
     
     tts_time = (time.time() - tts_start) * 1000
     log.info(f"Đã render file MP3 hoàn tất. Thời gian làm TTS: {tts_time:.0f}ms")
     
-    # Hẹn giờ cho FastAPI xóa file MP3 sau khi đã Stream thành công về Frontend
     background_tasks.add_task(os.remove, output_path)
     return FileResponse(output_path, media_type="audio/mpeg")
