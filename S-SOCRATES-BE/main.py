@@ -8,7 +8,7 @@ from services.stt_service import process_stt_request
 from services.chat_orchestrator import process_chat_message
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
 from services.semantic_router import semantic_router
-from services.llm_service import ask_socrates
+from services.llm_service import ask_socrates, switch_gemini_model, AVAILABLE_GEMINI_MODELS
 
 # =========================
 # FastAPI Configuration
@@ -32,7 +32,7 @@ class ChatRequest(BaseModel):
     message: str
 
 class DecisionRequest(BaseModel):
-    mode: str  # "preset" or "ai"
+    mode: str  # "preset", "ai" (Ollama), or "gemini"
     selected_answer: str = None
     transcript: str = None
 
@@ -44,12 +44,27 @@ class RobotCommand(BaseModel):
     text: str = ""
     emotion: str  # "neutral", "speaking", "challenge"
 
-# Global storage for the latest command for the robot
-# In a real app, use a Queue or Redis. For the talkshow demo, the latest command is enough.
-_latest_robot_command = None
+class AudioConfigRequest(BaseModel):
+    tts_voice: str = "Aoede"
+    tts_speed: float = 1.0
+    stt_model: str = "nova-2"
+    stt_language: str = "vi"
+    gemini_model: str = "models/gemini-2.0-flash"
 
-# Global storage for the latest transcript (from Robot -> Operator)
+# =========================
+# Global Runtime State
+# =========================
+_latest_robot_command = None
 _latest_transcript = None
+
+# Operator có thể chỉnh trực tiếp từ Web UI
+GLOBAL_AUDIO_CONFIG = {
+    "tts_voice": "Aoede",
+    "tts_speed": 1.0,
+    "stt_model": "nova-2",
+    "stt_language": "vi",
+    "gemini_model": "models/gemini-2.0-flash",
+}
 
 # =========================
 # Endpoints
@@ -66,7 +81,11 @@ async def chat(req: ChatRequest):
 @app.post("/stt")
 async def speech_to_text(file: UploadFile = File(...)):
     try:
-        text = process_stt_request(file)
+        text = process_stt_request(
+            file,
+            model=GLOBAL_AUDIO_CONFIG["stt_model"],
+            language=GLOBAL_AUDIO_CONFIG["stt_language"]
+        )
         return {"text": text}
     except Exception as e:
         import traceback
@@ -76,7 +95,9 @@ async def speech_to_text(file: UploadFile = File(...)):
 @app.post("/tts")
 async def text_to_speech(req: TTSRequest, background_tasks: BackgroundTasks):
     try:
-        return process_tts_request(req.text, req.voice, background_tasks)
+        voice = GLOBAL_AUDIO_CONFIG["tts_voice"]
+        speed = GLOBAL_AUDIO_CONFIG["tts_speed"]
+        return process_tts_request(req.text, voice, background_tasks, speaking_rate=speed)
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -88,6 +109,38 @@ async def list_vi_voices():
     return {"voices": voices}
 
 # =========================
+# Audio Config Endpoints
+# =========================
+
+@app.get("/configs")
+async def get_configs():
+    return {
+        "config": GLOBAL_AUDIO_CONFIG,
+        "available_voices": CHIRP3_HD_VOICES,
+        "available_stt_models": ["nova-2", "nova-2-general", "whisper-large"],
+        "available_stt_languages": [
+            {"code": "vi", "label": "Tiếng Việt"},
+            {"code": "en", "label": "English"},
+            {"code": "ja", "label": "日本語"},
+            {"code": "zh", "label": "中文"},
+        ],
+        "available_gemini_models": AVAILABLE_GEMINI_MODELS,
+    }
+
+@app.post("/configs")
+async def update_configs(req: AudioConfigRequest):
+    GLOBAL_AUDIO_CONFIG["tts_voice"] = req.tts_voice
+    GLOBAL_AUDIO_CONFIG["tts_speed"] = max(0.25, min(2.0, req.tts_speed))
+    GLOBAL_AUDIO_CONFIG["stt_model"] = req.stt_model
+    GLOBAL_AUDIO_CONFIG["stt_language"] = req.stt_language
+    GLOBAL_AUDIO_CONFIG["gemini_model"] = req.gemini_model
+    
+    # Hot-swap Gemini model nếu thay đổi
+    switch_gemini_model(req.gemini_model)
+    
+    return {"status": "Config updated", "config": GLOBAL_AUDIO_CONFIG}
+
+# =========================
 # Orchestration Endpoints
 # =========================
 
@@ -95,7 +148,11 @@ async def list_vi_voices():
 async def process_audio(file: UploadFile = File(...)):
     global _latest_transcript, _latest_robot_command
     try:
-        transcript = process_stt_request(file)
+        transcript = process_stt_request(
+            file,
+            model=GLOBAL_AUDIO_CONFIG["stt_model"],
+            language=GLOBAL_AUDIO_CONFIG["stt_language"]
+        )
         if transcript.strip() == "":
             _latest_transcript = {
                 "transcript": "Không nhận được voice. Vui lòng nói lại.",
@@ -135,8 +192,12 @@ async def operator_decision(req: DecisionRequest):
         text = req.selected_answer
         emotion = "speaking"
     elif req.mode == "ai":
-        # Using LLM directly through ask_socrates
-        text = ask_socrates(req.transcript)
+        # Using Ollama (Local LLM) through ask_socrates
+        text = ask_socrates(req.transcript, model_choice="ollama")
+        emotion = "challenge"
+    elif req.mode == "gemini":
+        # Using Gemini (Cloud LLM) through ask_socrates
+        text = ask_socrates(req.transcript, model_choice="gemini")
         emotion = "challenge"
     else:
         return {"error": "Invalid mode"}

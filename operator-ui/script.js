@@ -43,6 +43,7 @@ function statusMessage(msg, type = 'normal') {
 
 function toggleModal(show) {
     document.getElementById('settings-modal').classList.toggle('open', show);
+    if (show) syncConfigs();
 }
 
 function syncExpandedPreview() {
@@ -61,11 +62,69 @@ function togglePreviewModal(show) {
     modal.classList.toggle('open', show);
 }
 
-function saveSettings() {
-    localStorage.setItem('socrates_api_base', document.getElementById('api-base').value);
+async function saveSettings() {
+    const base = document.getElementById('api-base').value;
+    localStorage.setItem('socrates_api_base', base);
+
+    // Push audio config to backend
+    try {
+        await fetch(`${base}/configs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                tts_voice: document.getElementById('cfg-tts-voice').value,
+                tts_speed: parseFloat(document.getElementById('cfg-tts-speed').value),
+                stt_model: document.getElementById('cfg-stt-model').value,
+                stt_language: document.getElementById('cfg-stt-language').value,
+                gemini_model: document.getElementById('cfg-gemini-model').value,
+            })
+        });
+        addLog("🔊 Audio config saved to backend.");
+    } catch (err) {
+        addLog("⚠️ Failed to save audio config.");
+    }
+
     checkConnection();
     toggleModal(false);
     addLog("Settings updated.");
+}
+
+async function syncConfigs() {
+    const base = document.getElementById('api-base').value;
+    try {
+        const res = await fetch(`${base}/configs`);
+        if (!res.ok) return;
+        const data = await res.json();
+        const cfg = data.config;
+
+        // Sync TTS Voice
+        const voiceEl = document.getElementById('cfg-tts-voice');
+        if (voiceEl) voiceEl.value = cfg.tts_voice;
+
+        // Sync TTS Speed
+        const speedEl = document.getElementById('cfg-tts-speed');
+        const speedDisplay = document.getElementById('speed-display');
+        if (speedEl) {
+            speedEl.value = cfg.tts_speed;
+            if (speedDisplay) speedDisplay.innerText = cfg.tts_speed + 'x';
+        }
+
+        // Sync STT Model
+        const modelEl = document.getElementById('cfg-stt-model');
+        if (modelEl) modelEl.value = cfg.stt_model;
+
+        // Sync STT Language
+        const langEl = document.getElementById('cfg-stt-language');
+        if (langEl) langEl.value = cfg.stt_language;
+
+        // Sync Gemini Model
+        const geminiEl = document.getElementById('cfg-gemini-model');
+        if (geminiEl) geminiEl.value = cfg.gemini_model;
+
+        addLog("🔧 Synced audio config from backend.");
+    } catch (err) {
+        // Silent fail - backend might not be up yet
+    }
 }
 
 function checkConnection() {
@@ -215,6 +274,44 @@ async function useAI() {
     } catch (err) {
         addLog("AI Failed.");
         statusMessage("AI Generation Failed", "error");
+    } finally {
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+}
+
+async function useGemini() {
+    const base = document.getElementById('api-base').value;
+    if (!currentData || !currentData.transcript) {
+        return;
+    }
+    
+    const btn = document.querySelector('.gemini-btn');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span>⏳ GEMINI...</span>';
+    btn.disabled = true;
+    statusMessage("Generating Gemini response...");
+
+    try {
+        const response = await fetch(`${base}/operator-decision`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                mode: 'gemini',
+                transcript: currentData.transcript
+            })
+        });
+        const result = await response.json();
+        if (result.error) throw new Error(result.error);
+        
+        document.getElementById('final-preview').innerText = result.text;
+        syncExpandedPreview();
+        setEmotion(result.emotion, null, false);
+        updateSendButton();
+        addLog("💎 Gemini response generated.");
+    } catch (err) {
+        addLog("💎 Gemini Failed.");
+        statusMessage("Gemini Generation Failed", "error");
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;
