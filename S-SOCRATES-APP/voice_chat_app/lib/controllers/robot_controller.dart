@@ -11,11 +11,13 @@ import 'package:voice_chat_app/stage/robot_ui_state.dart';
 class RobotController {
   final ValueNotifier<RobotUiState> state = ValueNotifier(RobotUiState.idle);
   final ValueNotifier<String> currentMessage = ValueNotifier('');
+  final ValueNotifier<bool> isBackendReachable = ValueNotifier(true);
   final ValueNotifier<Map<String, dynamic>?> latestTranscriptResult = ValueNotifier(null);
   
   Timer? _pollingTimer;
-  String? _lastCommandText;
+  String? _lastCommandSignature;
   bool _isProcessing = false;
+  int _pollFailureCount = 0;
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AgentAPI _agentAPI = AgentAPI();
@@ -30,6 +32,16 @@ class RobotController {
     _pollingTimer?.cancel();
     TtsService.stop();
     debugPrint('Robot Polling Stopped');
+  }
+
+  void clearConnectionWarning() {
+    if (!isBackendReachable.value) {
+      isBackendReachable.value = true;
+    }
+    if (state.value == RobotUiState.error) {
+      state.value = RobotUiState.idle;
+    }
+    _pollFailureCount = 0;
   }
 
   Future<void> startRecordingAudio() async {
@@ -68,6 +80,16 @@ class RobotController {
       final result = await _agentAPI.processAudio(path);
       latestTranscriptResult.value = result;
 
+      final transcript = (result?['transcript'] as String?)?.trim() ?? '';
+      final normalized = transcript.toLowerCase();
+      if (transcript.isNotEmpty &&
+          (normalized.contains('khong nhan duoc voice') ||
+              normalized.contains('không nhận được voice'))) {
+        currentMessage.value = transcript;
+        state.value = RobotUiState.noVoice;
+        return;
+      }
+
       state.value = RobotUiState.thinking; // giữ nguyên ở đây
     } catch (e) {
       debugPrint('Stop recording error: $e');
@@ -79,14 +101,34 @@ class RobotController {
     if (_isProcessing) return;
 
     debugPrint('Polling backend at: ${ApiConfig.baseUrl}');
-    final command = await ApiService.getLatestCommand();
+    final pollResult = await ApiService.getLatestCommand();
+    final command = pollResult.command;
+
+    if (pollResult.reachable) {
+      _pollFailureCount = 0;
+      if (!isBackendReachable.value) {
+        isBackendReachable.value = true;
+        if (state.value == RobotUiState.error) {
+          state.value = RobotUiState.idle;
+        }
+      }
+    } else {
+      _pollFailureCount += 1;
+      // Avoid flaky false alarms when one poll misses.
+      if (_pollFailureCount >= 10 && isBackendReachable.value) {
+        isBackendReachable.value = false;
+        state.value = RobotUiState.error;
+      }
+    }
+
     if (command != null) {
       debugPrint('Received new command');
-      final text = command['text'] as String;
-      final emotion = command['emotion'] as String;
+      final text = ((command['text'] ?? '') as String).trim();
+      final emotion = ((command['emotion'] ?? 'neutral') as String).trim().toLowerCase();
+      final signature = '${command['timestamp'] ?? ''}|$emotion|$text';
 
-      if (text != _lastCommandText && text.isNotEmpty) {
-        _lastCommandText = text;
+      if (signature != _lastCommandSignature) {
+        _lastCommandSignature = signature;
         _processCommand(text, emotion);
       }
     }
@@ -94,30 +136,69 @@ class RobotController {
 
   Future<void> _processCommand(String text, String emotion) async {
     _isProcessing = true;
-    _lastCommandText = text;
     debugPrint('Process Command: $text ($emotion)');
 
     try {
-      // 1. Thinking state
-      state.value = RobotUiState.thinking;
+      RobotUiState mappedState = RobotUiState.idle;
+      switch (emotion) {
+        case 'listening':
+          mappedState = RobotUiState.listening;
+          break;
+        case 'speaking':
+          mappedState = RobotUiState.speaking;
+          break;
+        case 'challenge':
+          mappedState = RobotUiState.challenge;
+          break;
+        case 'no_voice':
+          mappedState = RobotUiState.noVoice;
+          break;
+        case 'error':
+          mappedState = RobotUiState.idle;
+          break;
+        default:
+          mappedState = RobotUiState.idle;
+      }
 
-      // 2. Set Emotion & Start Speaking
-      currentMessage.value = text;
-      state.value = (emotion == 'challenge') 
-        ? RobotUiState.challenge 
-        : RobotUiState.speaking;
-
-      debugPrint('State -> ${state.value}');
-      
-      // 3. Trigger TTS
-      TtsService.setOnComplete(() {
-        debugPrint('TTS Callback: Finished');
-        state.value = RobotUiState.idle;
-        currentMessage.value = '';
+      if (emotion == 'no_voice') {
+        currentMessage.value = text.isEmpty
+            ? 'Không nhận được voice. Vui lòng nói lại.'
+            : text;
+        state.value = RobotUiState.noVoice;
         _isProcessing = false;
-      });
+        return;
+      }
 
-      await TtsService.speak(text);
+      // speaking/challenge require text and trigger TTS.
+      if (mappedState == RobotUiState.speaking || mappedState == RobotUiState.challenge) {
+        if (text.isEmpty) {
+          debugPrint('Skip speaking/challenge command because text is empty.');
+          state.value = RobotUiState.error;
+          currentMessage.value = '';
+          _isProcessing = false;
+          return;
+        }
+
+        state.value = RobotUiState.thinking;
+        currentMessage.value = text;
+        state.value = mappedState;
+        debugPrint('State -> ${state.value}');
+
+        TtsService.setOnComplete(() {
+          debugPrint('TTS Callback: Finished');
+          state.value = RobotUiState.idle;
+          currentMessage.value = '';
+          _isProcessing = false;
+        });
+
+        await TtsService.speak(text);
+        return;
+      }
+
+      currentMessage.value = text;
+      state.value = mappedState;
+      debugPrint('State -> ${state.value}');
+      _isProcessing = false;
     } catch (e) {
       debugPrint('Process Error: $e');
       state.value = RobotUiState.error;
@@ -130,6 +211,7 @@ class RobotController {
     _audioRecorder.dispose();
     state.dispose();
     currentMessage.dispose();
+    isBackendReachable.dispose();
     latestTranscriptResult.dispose();
   }
 }

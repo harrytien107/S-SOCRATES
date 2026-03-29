@@ -6,7 +6,6 @@ import 'ai_orb_widget.dart';
 import 'ai_status_badge.dart';
 import 'ai_subtitle_panel.dart';
 import '../services/api_config.dart';
-import '../services/tts_service.dart';
 import '../controllers/robot_controller.dart';
 
 /// Màn hình sân khấu chính — wireframe orb, tối giản
@@ -21,7 +20,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
   // ── State machine ──────────────────────────────────────────────
   RobotUiState _uiState = RobotUiState.idle;
   String? _subtitle;
-  String? _errorMessage;
+  bool _backendReachable = true;
 
   // ── Services ──────────────────────────────────────────────────
   final RobotController _robotController = RobotController();
@@ -59,6 +58,12 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
           _subtitle = text.length > 80 ? '${text.substring(0, 80)}…' : text;
           if (text.isEmpty) _subtitle = null;
         });
+      }
+    });
+
+    _robotController.isBackendReachable.addListener(() {
+      if (mounted) {
+        setState(() => _backendReachable = _robotController.isBackendReachable.value);
       }
     });
 
@@ -101,6 +106,8 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
 
   @override
   void dispose() {
+    // Hide stale connection notice when leaving this screen.
+    _robotController.clearConnectionWarning();
     _robotController.dispose();
     super.dispose();
   }
@@ -160,16 +167,13 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
             padding: const EdgeInsets.symmetric(horizontal: 40),
             child: AiSubtitlePanel(text: _subtitle, state: _uiState),
           ),
-        // Error message
-        if (_errorMessage != null)
+        if (_uiState == RobotUiState.idle)
           Padding(
-            padding: const EdgeInsets.only(top: 8, left: 40, right: 40),
-            child: Text(
-              _errorMessage!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xFFFF6B6B), fontSize: 13),
-            ),
+            padding: const EdgeInsets.only(top: 8, left: 34, right: 34),
+            child: _neutralWelcomePanel(),
           ),
+        if (!_backendReachable)
+          _connectionLostPanel(),
         const SizedBox(height: 12),
         // Tap hint — fades after 4 seconds
         AnimatedOpacity(
@@ -186,6 +190,50 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
         ),
         const SizedBox(height: 12),
       ],
+    );
+  }
+
+  Widget _connectionLostPanel() {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 820),
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2A0A0A).withValues(alpha: 0.92),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFFF6B6B).withValues(alpha: 0.65)),
+      ),
+      child: Text(
+        'Mất kết nối với backend. Vui lòng kiểm tra lại URL và đảm bảo backend đang chạy.',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Color(0xFFFFB4B4),
+          fontSize: 13,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+    );
+  }
+
+  Widget _neutralWelcomePanel() {
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 860),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF07202C).withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFF22D3EE).withValues(alpha: 0.45)),
+      ),
+      child: Text(
+        'Xin chào! Tôi là S-Socrates, sẵn sàng lắng nghe và trò chuyện cùng bạn. Hãy chạm vào orb để bắt đầu.',
+        textAlign: TextAlign.center,
+        style: const TextStyle(
+          color: Color(0xFFCFFAFE),
+          fontSize: 13,
+          height: 1.45,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
     );
   }
 
@@ -288,31 +336,6 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _MockBadge extends StatelessWidget {
-  const _MockBadge();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.amber.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(5),
-        border: Border.all(color: Colors.amber.withValues(alpha: 0.25)),
-      ),
-      child: const Text(
-        'DEMO',
-        style: TextStyle(
-          color: Colors.amber,
-          fontSize: 8,
-          letterSpacing: 1.5,
-          fontWeight: FontWeight.w600,
-        ),
       ),
     );
   }

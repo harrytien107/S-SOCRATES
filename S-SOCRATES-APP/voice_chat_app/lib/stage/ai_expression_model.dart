@@ -168,6 +168,23 @@ const Map<RobotUiState, AiExpressionData> kExpressions = {
     mouthOpacity: 0.92,
   ),
 
+  // Khong nhan duoc voice -> khuon mat that vong
+  RobotUiState.noVoice: AiExpressionData(
+    eyeHalfW: 0.11,
+    eyeBarH: 0.018,
+    eyeSpread: 0.25,
+    eyeVertical: -0.20,
+    leftTilt: 0.04,
+    rightTilt: -0.04,
+    eyeOpacity: 0.86,
+    mouthHalfW: 0.17,
+    mouthVertical: 0.18,
+    mouthCurve: -0.55,
+    mouthOpen: 0.01,
+    mouthThickness: 0.018,
+    mouthOpacity: 0.90,
+  ),
+
   // Lỗi
   RobotUiState.error: AiExpressionData(
     eyeHalfW: 0.10,

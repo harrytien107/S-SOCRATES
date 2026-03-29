@@ -1,52 +1,75 @@
-# S-SOCRATES Backend (Python)
+# S-SOCRATES Backend (FastAPI)
 
-Đây là thành phần Cốt lõi của hệ thống S-Socrates. Nó tiếp nhận các yêu cầu từ Flutter App, sử dụng AI (Whisper, Ollama Qwen2:1.5b, Edge-TTS) để nhận diện, suy luận, phản biện và trả về âm thanh.
+Backend chịu trách nhiệm xử lý voice/text request, điều phối AI response, và trả command cho robot app/operator UI.
 
-## 🏗️ Cấu trúc dự án (Clean Architecture)
+## Tech stack
+
+- FastAPI + Uvicorn
+- Deepgram STT
+- Semantic Router + LLM service
+- TTS service
+
+## Cấu trúc chính
 
 ```text
 S-SOCRATES-BE/
-│
-├── main.py                    # Router chính kết nối API (FastAPI)
-├── requirements.txt           # Danh sách thư viện Python
-├── memory.json                # Lưu trữ bối cảnh trò chuyện (Auto-generated)
-│
-├── knowledge/                 # Thư mục chứa tài liệu Text dùng cho RAG 
-│   └── uth.txt                # Thông tin ĐH Giao thông vận tải
-│
-├── voice/                     # Thư mục lưu audio người dùng (Auto-generated)
-│
-└── services/                  # Business Logic Layer
-    ├── llm_service.py         # Liên kết Ollama LlamaIndex để suy nghĩ
-    ├── memory_service.py      # Lưu và chèn lịch sử 5 lệnh gần nhất vào AI
-    ├── stt_service.py         # Faster-Whisper: Chuyển giọng nói tiếng Việt thành Text
-    └── tts_service.py         # Edge-TTS: Chuyển văn bản thành âm thanh MP3
+├── main.py
+├── requirements.txt
+├── qa_presets.json
+├── knowledge/
+│   └── uth.txt
+├── services/
+│   ├── stt_service.py
+│   ├── tts_service.py
+│   ├── llm_service.py
+│   ├── semantic_router.py
+│   ├── memory_service.py
+│   └── chat_orchestrator.py
+└── utils/
+    └── logger.py
 ```
 
-## 🛠️ Hướng dẫn cài đặt Backend
+## Cài đặt
 
-1. **Khởi động Ollama (Bắt buộc chạy trước)**
-   ```powershell
-   ollama pull qwen2:1.5b
-   ollama serve
-   ```
+```powershell
+cd S-SOCRATES-BE
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -r requirements.txt
+```
 
-2. **Cài đặt thư viện Python**
-   Mở terminal trong thư mục `S-SOCRATES-BE` và chạy:
-   ```powershell
-   python -m venv .venv
-   .\.venv\Scripts\activate
-   pip install -r requirements.txt
-   ```
+## Chạy backend
 
-3. **Chạy Server**
-   ```powershell
-   uvicorn main:app --reload --port 8000
-   ```
-   Server sẽ mở ở cổng 8000. Bạn có thể xem tài liệu API tại: `http://localhost:8000/docs`
+```powershell
+uvicorn main:app --reload --port 8000 --host 0.0.0.0 --no-access-log
+```
 
-## 📡 Các API chính
+Docs: `http://localhost:8000/docs`
 
-- `POST /chat`: Gửi câu hỏi văn bản lên, nhận câu trả lời AI (tích hợp nhớ bối cảnh `memory.json`).
-- `POST /stt`: Nhận file âm thanh `.m4a` (thông qua form upload), dùng Whisper trả về dạng Text. Lệnh này cũng sẽ lưu tạm file ở thư mục `voice/` và xóa sạch sau khi làm xong để tối ưu dung lượng.
-- `POST /tts`: Tự động convert văn bản AI thành file âm thanh (MP3 Stream) để loa máy tính có thể đọc ngay lập tức.
+## Endpoint quan trọng
+
+- `POST /chat`: xử lý chat text.
+- `POST /stt`: chuyển audio -> text.
+- `POST /tts`: chuyển text -> audio.
+- `POST /process-audio`: pipeline voice end-to-end cho robot.
+- `POST /send-to-robot`: operator gửi lệnh (text + emotion).
+- `GET /latest-command`: robot polling command mới nhất.
+- `GET /latest-transcript`: operator polling transcript mới nhất.
+
+## Lưu ý trạng thái robot
+
+- `speaking`, `challenge`: yêu cầu có text.
+- `no_voice`: dùng khi STT rỗng hoặc không nhận được voice.
+- `error`: dùng cho lỗi/kết nối.
+
+## Biến môi trường
+
+Tùy cấu hình service, bạn có thể cần:
+- `DEEPGRAM_API_KEY`
+- Các biến liên quan TTS/LLM (nếu áp dụng theo môi trường của bạn)
+
+## Troubleshooting
+
+- Timeout khi polling: kiểm tra backend có đang xử lý request nặng.
+- Không có transcript: kiểm tra audio format, key STT, và log backend.
+- Không phát tiếng: kiểm tra TTS service và đường trả audio.
