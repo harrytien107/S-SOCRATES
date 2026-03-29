@@ -171,6 +171,33 @@ main {
     border: 1px solid var(--border);
     outline: none;
 }
+.preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+.fixed-preview {
+    flex-grow: 0;
+    height: 190px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.preview-modal-content {
+    width: min(920px, 92vw);
+    max-height: 86vh;
+    display: flex;
+    flex-direction: column;
+}
+.preview-area-expanded {
+    min-height: 360px;
+    max-height: calc(86vh - 120px);
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin-bottom: 0;
+}
 .preview-area:focus { border-color: var(--cyan); }
 .preview-area:empty:before {
     content: "Select a preset or generate AI response to edit here...";
@@ -181,7 +208,7 @@ main {
 }
 
 #last-sent-status {
-    min-height: 40px;
+    min-height: 16px;
     margin-top: 1rem;
     font-size: 0.8rem;
     text-align: center;
@@ -194,7 +221,7 @@ main {
     background: rgba(0,0,0,0.2);
     border: 1px solid var(--border);
     border-radius: 8px;
-    height: 60px;
+    height: 69px;
     overflow-y: auto;
     font-family: 'JetBrains Mono', monospace;
     font-size: 0.7rem;

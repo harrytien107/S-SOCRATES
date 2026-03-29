@@ -1,109 +1,85 @@
-# S-Socrates AI – Chiến Thần Phản Biện UTH
+# S-SOCRATES
 
-Chào mừng đến với **S-Socrates**, một trợ lý AI thông minh được thiết kế đặc biệt cho talkshow *"Tôi tư duy, tôi tồn tại"*. Lấy cảm hứng từ triết gia Socrates, AI này không chỉ trả lời câu hỏi mà còn sử dụng phương pháp **Socratic Questioning** (đặt câu hỏi ngược lại) để kích thích tư duy người dùng.
+S-SOCRATES là hệ thống AI hội thoại tiếng Việt cho kịch bản phản biện/talkshow, gồm:
+- **Operator Console (Web)** để điều phối nội dung và cảm xúc robot.
+- **Robot App (Flutter)** để tương tác giọng nói trên sân khấu.
+- **Backend (FastAPI)** để xử lý STT, điều phối phản hồi AI, và TTS.
 
-## 🌟 Chức năng nổi bật
-
-- 🎙️ **Giao tiếp bằng giọng nói (Voice Chat):** Tích hợp Whisper AI để nhận diện tiếng Việt cực chuẩn và Edge-TTS để trả lời bằng giọng nói tự nhiên.
-- 🛑 **Tự động bắt nhịp (VAD):** Hệ thống tự động nhận diện khoảng lặng (silence) để biết khi nào bạn đã nói xong và lập tức phản hồi mà không cần chạm tay.
-- 🧠 **Trí nhớ ngữ cảnh (Memory Context):** S-Socrates có thể nhớ lại các diễn biến trước đó trong cuộc trò chuyện để đưa ra câu trả lời liền mạch, logic.
-- 📚 **Kiến thức RAG (Retrieval-Augmented Generation):** AI có khả năng nhúng kiến thức từ tài liệu (ví dụ: về trường ĐH Giao thông vận tải TP.HCM - UTH) để cung cấp thông tin chính xác.
-- 🖥️ **Giao diện đa nền tảng:** Hỗ trợ chạy mượt mà trên **Windows Desktop** và **Web Browser** thông qua Flutter.
-- ⚡ **Local LLM & Offline Ready:** Sử dụng Ollama (Qwen2 1.5b) chạy trực tiếp trên máy, bảo mật 100% dữ liệu.
-
----
-
-## 🏗️ Kiến trúc Hệ thống (System Architecture)
+## Kiến trúc tổng quan
 
 ```text
-Flutter App (S-SOCRATES-APP)
-     │
-     │ 1. API: Voice/Text Request  
-     │ 2. API: Audio Stream Response
-     ▼
-FastAPI Backend (S-SOCRATES-BE)
-     │
-     ├─ [STT Service] Faster-Whisper (Nhận diện giọng nói)
-     ├─ [Memory Service] Lưu trữ ngữ cảnh hội thoại
-     ├─ [LLM & RAG Service] LlamaIndex + Ollama (Xử lý tư duy)
-     └─ [TTS Service] Edge-TTS (Phát sinh âm thanh phản hồi)
+Operator UI (Web) ───────────────┐
+                                 │
+Robot App (Flutter) ───────┐     │
+                           ├──> FastAPI Backend (S-SOCRATES-BE)
+                           │        ├─ STT (Deepgram)
+                           │        ├─ Semantic Router / LLM
+                           │        └─ TTS
+                           │
+                           └<── Polling command/status
 ```
 
----
+## Thành phần dự án
 
-## 🚀 Hướng dẫn Cài đặt & Khởi chạy
+- `S-SOCRATES-BE/`: Backend FastAPI, nghiệp vụ AI, STT/TTS.
+- `S-SOCRATES-APP/voice_chat_app/`: Ứng dụng Flutter (robot + giao diện chat).
+- `operator-ui/`: Console web cho operator.
 
-Để chạy toàn bộ hệ thống, bạn cần 3 Terminal riêng biệt: (1) Ollama, (2) Backend, (3) Frontend.
+## Yêu cầu hệ thống
 
-### Yêu cầu hệ thống (Prerequisites)
-- **Python** (>= 3.10)
-- **Flutter SDK** (>= 3.x.x)
-- **Ollama** (Client `ollama` cài đặt trên máy)
+- Python `>= 3.10`
+- Flutter SDK `>= 3.x`
+- Ollama (nếu dùng local LLM)
 
----
+## Quick Start (3 terminal)
 
-### Bước 1: Khởi động Lõi Trí tuệ (Ollama)
+### 1) Ollama
 
-Mở **Terminal 1**:
 ```powershell
-# Tải model Qwen2 bản nhẹ (chỉ cần chạy lần đầu, tốn ~1GB RAM)
 ollama pull qwen2:1.5b
-
-# Khởi động server Ollama
 ollama serve
 ```
-*(Giữ Terminal này luôn mở để AI có "não" suy nghĩ).*
 
----
+### 2) Backend
 
-### Bước 2: Khởi động Backend (Python FastAPI)
-
-Mở **Terminal 2**:
 ```powershell
-# Chuyển vào thư mục Backend
 cd S-SOCRATES-BE
-
-# Cài đặt môi trường ảo (Tuỳ chọn)
 python -m venv .venv
 .\.venv\Scripts\activate
-
-# Cài đặt các thư viện (Chỉ lần đầu)
 pip install -r requirements.txt
-
-# Khởi động Backend Server
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8000 --host 0.0.0.0 --no-access-log
 ```
-Backend sẽ khởi chạy tại: `http://localhost:8000`. Khi bạn thấy log báo *"Application startup complete"* là thành công.
 
----
+### 3) Flutter App
 
-### Bước 3: Khởi động Giao diện Cửa sổ (Flutter App)
-
-Mở **Terminal 3**:
 ```powershell
-# Chuyển vào thư mục Flutter App
 cd S-SOCRATES-APP\voice_chat_app
-
-# Lấy các thư viện UI (Chỉ lần đầu)
 flutter pub get
-
-# Chạy App với giao diện Desktop Windows
-flutter run -d windows
+flutter run -d windows # hoặc flutter run -d chrome hoặc flutter run -d <device_id>
 ```
-*(Hoặc nếu bạn muốn thử nghiệm giao diện Web: `flutter run -d chrome`)*
 
----
+## Operator Console
 
-## 🎯 Cách sử dụng
+Mở file `operator-ui/index.html` bằng web server tĩnh (hoặc Live Server), sau đó cấu hình `API BASE URL` trỏ tới backend.
 
-1. **Text Chat (Tab Tin nhắn):** Bạn chỉ cần nhập văn bản vào và ấn gửi. S-Socrates sẽ trả lời cực kỳ sắc bén và hơi có chút "gen Z".
-2. **Voice Chat (Tab Giọng nói):** 
-   - Ấn vào biểu tượng Micro để gọi S-Socrates. 
-   - Khi vòng sáng hiện lên *"AI Voice đang lắng nghe"*, bạn hãy đưa ra câu hỏi.
-   - Khi bạn ngừng nói **2 giây**, hệ thống tự hiểu bạn đã nói xong (VAD) và sẽ tự nhận diện giọng nói -> Xử lý AI -> Phát âm thanh trả lời ra Loa.
-   - Cuộc gọi diễn ra liên tục, Rảnh tay hoàn toàn!
+Các chức năng chính:
+- Nhận transcript và gợi ý phản hồi.
+- Generate AI response.
+- Chọn emotion và gửi lệnh cho robot.
+- Điều phối trạng thái `no_voice`, `speaking`, `challenge`, ...
 
----
+## Lưu ý vận hành
 
-**🎓 Phát triển tại: Đại học Giao thông vận tải TP.HCM (UTH)**  
-👤 *Hệ thống đang được phát triển hỗ trợ cho dự án Talkshow Phản biện.*
+- Nếu backend bận xử lý AI, polling có thể chậm tạm thời.
+- Robot app đã có ngưỡng chống false disconnect (không báo mất kết nối quá sớm).
+- Khi STT rỗng, hệ thống tự đưa robot sang trạng thái `no_voice`.
+
+## Tài liệu chi tiết
+
+- Backend: `S-SOCRATES-BE/README.md`
+- Flutter App: `S-SOCRATES-APP/README.md`
+
+## Bảo mật
+
+- Không commit key/credential vào repo.
+- Nếu từng lộ key service account, cần rotate key ngay.

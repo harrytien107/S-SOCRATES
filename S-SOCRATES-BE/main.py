@@ -1,4 +1,4 @@
-import os
+import time
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -41,7 +41,7 @@ class TTSRequest(BaseModel):
     voice: str = "vi-VN-HoaiMyNeural"
 
 class RobotCommand(BaseModel):
-    text: str
+    text: str = ""
     emotion: str  # "neutral", "speaking", "challenge"
 
 # Global storage for the latest command for the robot
@@ -93,9 +93,20 @@ async def list_vi_voices():
 
 @app.post("/process-audio")
 async def process_audio(file: UploadFile = File(...)):
-    global _latest_transcript
+    global _latest_transcript, _latest_robot_command
     try:
         transcript = process_stt_request(file)
+        if transcript.strip() == "":
+            _latest_transcript = {
+                "transcript": "Không nhận được voice. Vui lòng nói lại.",
+                "candidates": []
+            }
+            _latest_robot_command = {
+                "text": "Không nhận được voice. Vui lòng nói lại.",
+                "emotion": "no_voice",
+                "timestamp": time.time_ns()
+            }
+            return _latest_transcript
         candidates = semantic_router.get_top_matches(transcript)
         _latest_transcript = {
             "transcript": transcript,
@@ -142,10 +153,14 @@ async def operator_decision(req: DecisionRequest):
 @app.post("/send-to-robot")
 async def send_to_robot(req: RobotCommand):
     global _latest_robot_command
+    text = (req.text or "").strip()
+    if req.emotion in {"speaking", "challenge"} and not text:
+        return {"error": "Text is required for speaking/challenge emotion"}
+
     _latest_robot_command = {
-        "text": req.text,
+        "text": text,
         "emotion": req.emotion,
-        "timestamp": os.getpid() # Just a dummy to detect newness if needed
+        "timestamp": time.time_ns()
     }
     return {"status": "Command sent to robot queue", "command": _latest_robot_command}
 

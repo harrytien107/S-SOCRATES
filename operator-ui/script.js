@@ -8,6 +8,8 @@ window.onload = () => {
     
     const preview = document.getElementById('final-preview');
     preview.addEventListener('input', updateSendButton);
+    preview.addEventListener('paste', (e) => e.preventDefault());
+    preview.addEventListener('keydown', (e) => e.preventDefault());
     
     checkConnection();
     updateSendButton(); // Sync initial state
@@ -41,6 +43,22 @@ function statusMessage(msg, type = 'normal') {
 
 function toggleModal(show) {
     document.getElementById('settings-modal').classList.toggle('open', show);
+}
+
+function syncExpandedPreview() {
+    const preview = document.getElementById('final-preview');
+    const expanded = document.getElementById('final-preview-expanded');
+    if (!preview || !expanded) return;
+    expanded.innerText = preview.innerText || '';
+}
+
+function togglePreviewModal(show) {
+    const modal = document.getElementById('preview-modal');
+    if (!modal) return;
+    if (show) {
+        syncExpandedPreview();
+    }
+    modal.classList.toggle('open', show);
 }
 
 function saveSettings() {
@@ -138,6 +156,7 @@ function displayWorkflow(data) {
 
 function selectResponse(text, mode, element) {
     document.getElementById('final-preview').innerText = text;
+    syncExpandedPreview();
     updateSendButton();
     
     document.querySelectorAll('.suggestion-card').forEach(el => el.classList.remove('active'));
@@ -149,9 +168,18 @@ function updateSendButton() {
     const rawText = document.getElementById('final-preview').innerText.trim();
     const btn = document.getElementById('send-trigger');
     const hasText = rawText.length > 0;
-    
-    btn.disabled = !hasText;
-    statusMessage(hasText ? "Ready to Send" : "Waiting for response...");
+    if (hasText && selectedEmotion === 'neutral') {
+        setEmotion('speaking', null, false);
+        return;
+    }
+    const textRequired = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
+
+    btn.disabled = textRequired && !hasText;
+    if (btn.disabled) {
+        statusMessage("Speaking/Challenge cần nội dung để gửi");
+        return;
+    }
+    statusMessage(textRequired ? "Ready to Send" : "Ready to Send (emotion only)");
 }
 
 async function useAI() {
@@ -180,6 +208,7 @@ async function useAI() {
         if (result.error) throw new Error(result.error);
         
         document.getElementById('final-preview').innerText = result.text;
+        syncExpandedPreview();
         setEmotion(result.emotion, null, false); // Don't log auto-set emotion
         updateSendButton();
         addLog("AI response generated.");
@@ -193,21 +222,32 @@ async function useAI() {
 }
 
 function setEmotion(emo, btn, explicit = true) {
-    if (selectedEmotion === emo) return;
+    if (selectedEmotion === emo) {
+        document.querySelectorAll('.emotion-btn').forEach(el => {
+            el.classList.toggle('active', el.dataset.emotion === emo);
+        });
+        return;
+    }
     selectedEmotion = emo;
     document.querySelectorAll('.emotion-btn').forEach(el => {
-        const btnText = el.innerText.toLowerCase();
-        el.classList.toggle('active', btnText === emo);
+        el.classList.toggle('active', el.dataset.emotion === emo);
     });
     if (explicit) addLog(`Emotion: ${emo}`);
+    updateSendButton();
 }
 
 async function sendToRobot() {
     const base = document.getElementById('api-base').value;
-    const text = document.getElementById('final-preview').innerText.trim();
+    const rawText = document.getElementById('final-preview').innerText.trim();
+    if (rawText.length > 0 && selectedEmotion === 'neutral') {
+        setEmotion('speaking', null, false);
+    }
+    const text = selectedEmotion === 'no_voice'
+        ? "Không nhận được voice. Vui lòng nói lại."
+        : rawText;
     const btn = document.getElementById('send-trigger');
-
-    if (!text) return;
+    const textRequired = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
+    if (textRequired && !text) return;
 
     btn.disabled = true;
     statusMessage("Sending to Robot...", "normal");

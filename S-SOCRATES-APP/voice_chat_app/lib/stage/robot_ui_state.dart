@@ -1,7 +1,16 @@
 import 'package:flutter/material.dart';
 
 /// Trạng thái của AI robot trên sân khấu
-enum RobotUiState { idle, listening, uploading, thinking, speaking, challenge, error }
+enum RobotUiState {
+  idle,
+  listening,
+  uploading,
+  thinking,
+  speaking,
+  challenge,
+  noVoice,
+  error
+}
 
 extension RobotUiStateX on RobotUiState {
   String get label {
@@ -18,6 +27,8 @@ extension RobotUiStateX on RobotUiState {
         return 'S-Socrates đang phản biện';
       case RobotUiState.challenge:
         return 'Thách thức!';
+      case RobotUiState.noVoice:
+        return 'Khong nghe ro';
       case RobotUiState.error:
         return 'Mất kết nối';
     }
@@ -37,6 +48,8 @@ extension RobotUiStateX on RobotUiState {
         return const Color(0xFF00EEFF);
       case RobotUiState.challenge:
         return const Color(0xFFFF6B35);
+      case RobotUiState.noVoice:
+        return const Color(0xFFFFA726);
       case RobotUiState.error:
         return const Color(0xFFFF4455);
     }
@@ -61,6 +74,8 @@ extension RobotUiStateX on RobotUiState {
         return 0.40;
       case RobotUiState.challenge:
         return 1.10;
+      case RobotUiState.noVoice:
+        return 0.18;
       case RobotUiState.error:
         return 0.08;
     }
@@ -81,6 +96,8 @@ extension RobotUiStateX on RobotUiState {
         return 0.60;
       case RobotUiState.challenge:
         return 1.50;
+      case RobotUiState.noVoice:
+        return 0.25;
       case RobotUiState.error:
         return 0.10;
     }
@@ -101,6 +118,8 @@ extension RobotUiStateX on RobotUiState {
         return 0.70;
       case RobotUiState.challenge:
         return 1.60;
+      case RobotUiState.noVoice:
+        return 0.30;
       case RobotUiState.error:
         return 0.25;
     }

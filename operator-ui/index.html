@@ -55,16 +55,20 @@
         <section class="panel">
             <div class="panel-header">Response Control</div>    
             <div class="scroll-area" style="display: flex; flex-direction: column;">
-                <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">FINAL SCRIPT PREVIEW</div>
-                <div class="preview-area" id="final-preview" contenteditable="true"></div>
+                <div class="preview-header">
+                    <div class="label" style="font-size: 0.7rem; color: var(--text-dim);">FINAL SCRIPT PREVIEW</div>
+                    <button class="settings-btn" id="expand-preview-btn" onclick="togglePreviewModal(true)">⤢ EXPAND</button>
+                </div>
+                <div class="preview-area fixed-preview" id="final-preview" contenteditable="false"></div>
 
                 <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">SET ROBOT EMOTION</div>
                 <div class="emotion-grid">
-                    <button class="emotion-btn active" onclick="setEmotion('neutral', this)">Neutral</button>
-                    <button class="emotion-btn" onclick="setEmotion('listening', this)">Listening</button>
-                    <button class="emotion-btn" onclick="setEmotion('speaking', this)">Speaking</button>
-                    <button class="emotion-btn" onclick="setEmotion('challenge', this)">Challenge</button>
-                    <button class="emotion-btn" onclick="setEmotion('error', this)">Error</button>
+                    <button class="emotion-btn active" data-emotion="neutral" onclick="setEmotion('neutral', this)">Neutral</button>
+                    <button class="emotion-btn" data-emotion="listening" onclick="setEmotion('listening', this)">Listening</button>
+                    <button class="emotion-btn" data-emotion="speaking" onclick="setEmotion('speaking', this)">Speaking</button>
+                    <button class="emotion-btn" data-emotion="challenge" onclick="setEmotion('challenge', this)">Challenge</button>
+                    <button class="emotion-btn" data-emotion="no_voice" onclick="setEmotion('no_voice', this)">No Voice Notice</button>
+                    <button class="emotion-btn" data-emotion="error" onclick="setEmotion('error', this)">Error</button>
                 </div>
 
                 <button class="send-btn" id="send-trigger" onclick="sendToRobot()" disabled>
@@ -94,6 +98,17 @@
                 <input type="file" id="file-upload" accept="audio/wav" onchange="handleFileUpload(this)">
             </div>
             <button class="ai-reflex-btn" onclick="saveSettings()" style="background: var(--cyan); color: var(--bg-deep);">SAVE & RECONNECT</button>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="modal" id="preview-modal">
+        <div class="modal-content preview-modal-content">
+            <div class="modal-header">
+                <h2 style="margin: 0; color: var(--cyan);">FINAL SCRIPT PREVIEW</h2>
+                <button class="settings-btn" onclick="togglePreviewModal(false)">✕</button>
+            </div>
+            <div class="preview-area preview-area-expanded" id="final-preview-expanded"></div>
         </div>
     </div>
 

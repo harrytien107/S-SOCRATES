@@ -1,46 +1,66 @@
-# S-SOCRATES Frontend (Flutter App)
+# S-SOCRATES App (Flutter)
 
-Đây là Giao diện Người dùng Khách (Client) của hệ thống S-Socrates. Ứng dụng cung cấp 2 phương thức giao tiếp Text-Chat và Voice-Chat thông minh với thiết kế hiện đại, mượt mà và trực quan.
+Ứng dụng Flutter cho trải nghiệm người dùng/robot stage:
+- Voice chat (ghi âm, gửi STT, nhận phản hồi)
+- Hiển thị trạng thái robot theo emotion
+- Polling command từ backend
 
-## ✨ Tính năng chính
+## Cấu trúc chính
 
-- **Voice Activity Detection (VAD):** Hệ thống thông minh tự nhận biết khi bạn ngưng nói (2 giây im lặng) để lập tức thu âm file và gửi thẳng lên Backend phân tích. Bạn không cần phải bấm dừng mic thủ công.
-- **Microphone Glow Animation:** Vòng tròn sóng âm ánh sáng tương tác thời gian thực khi thu âm để báo hiệu đang lắng nghe.
-- **Auto-Play Edge TTS:** Cảm biến âm thanh nhận câu trả lời dạng chữ từ AI và sử dụng Edge-TTS (FastAPI Backend) để phát trực tiếp âm thanh ra loa.
-- **Web & Desktop Ready:** Ứng dụng code bằng Flutter 3, build hoàn hảo dưới dạng file `.exe` cho máy ảo/máy tính bàn Windows hoặc chạy qua trình duyệt Chrome/Edge.
+```text
+S-SOCRATES-APP/voice_chat_app/
+├── lib/
+│   ├── main.dart
+│   ├── stage/
+│   ├── controllers/
+│   ├── services/
+│   └── widgets/
+├── pubspec.yaml
+└── test/
+```
 
----
+## Yêu cầu
 
-## 💻 Hướng dẫn chạy môi trường (Running the App)
+- Flutter SDK `>= 3.x`
+- Thiết bị/chế độ chạy: Windows hoặc Chrome (tùy nhu cầu)
 
-### Yêu cầu
-- Đã cài hoàn tất Flutter SDK (khuyên dùng bản `stable`).
-- Kiểm tra hệ điều hành bằng lệnh: `flutter doctor`
+## Chạy ứng dụng
 
-### Các bước chạy
+```powershell
+cd S-SOCRATES-APP\voice_chat_app
+flutter pub get
+flutter run -d windows
+```
 
-1. Đi vào thư mục chứa code UI:
-   ```powershell
-   cd voice_chat_app
-   ```
-2. Cài đặt các thư viện mới (UI, record audio, path_provider, http...):
-   ```powershell
-   flutter pub get
-   ```
-3. Chạy App (Chọn 1 trong 2):
-   - **Chạy bằng Windows Desktop (Khuyên dùng)**: Mượt, không bị dính bảo mật Microphone của trình duyệt Web.
-     ```powershell
-     flutter run -d windows
-     ```
-   - **Chạy bằng Trình duyệt Web (Browser)**: Nhanh, nhẹ nhàng nếu không muốn gen file `.exe`.
-     ```powershell
-     flutter run -d chrome
-     ```
+Hoặc chạy web:
 
-## 🌐 Liên kết Backend
-Frontend này giao tiếp toàn diện thông qua 3 endpoint chính được mở tại `http://localhost:8000`:
-- `/chat`: Gửi text và nhận LLM response.
-- `/stt`: Gửi file `.m4a` thu âm và nhận văn bản Text.
-- `/tts`: Gửi văn bản Text và nhận Streaming Audio (MP3).
+```powershell
+flutter run -d chrome
+```
 
-Đảm bảo **S-SOCRATES-BE** đang hoạt động trước khi gửi câu lệnh để ứng dụng không gặp lỗi *Timeout / CORS Exception*.
+Hoặc chạy trên thiết bị Android/iOS (cần cấu hình thêm):
+
+```powershell
+flutter run -d <device_id>
+```
+
+## Kết nối backend
+
+App sử dụng base URL cấu hình trong settings và gọi các endpoint backend như:
+- `/latest-command`
+- `/process-audio`
+- `/stt`, `/tts`, `/chat` (tùy flow)
+
+Đảm bảo backend đang chạy trước khi test.
+
+## Luồng quan trọng
+
+- Robot polling command theo chu kỳ.
+- Có ngưỡng tránh báo mất kết nối giả khi backend bận.
+- Khi STT trả rỗng, app chuyển sang trạng thái `noVoice` (khuôn mặt thất vọng).
+
+## Troubleshooting
+
+- Không thu âm được: kiểm tra permission micro.
+- Timeout polling: kiểm tra IP backend và mạng LAN.
+- Không có audio phát ra: kiểm tra response TTS và thiết bị âm thanh.
