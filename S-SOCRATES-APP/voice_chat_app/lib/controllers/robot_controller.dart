@@ -229,7 +229,7 @@ class RobotController {
       }
     } else {
       _pollFailureCount += 1;
-      if (_pollFailureCount >= 10 && isBackendReachable.value) {
+      if (_pollFailureCount >= 5 && isBackendReachable.value) {
         isBackendReachable.value = false;
         state.value = RobotUiState.error;
       }
