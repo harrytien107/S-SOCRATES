@@ -47,16 +47,18 @@ class AiStatusBadge extends StatelessWidget {
           children: [
             // Status dot
             _StatusDot(color: color),
-            const SizedBox(width: 8),
-            Text(
-              state.label.toUpperCase(),
-              style: TextStyle(
-                color: color,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 1.8,
+            if (state.label.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              Text(
+                state.label.toUpperCase(),
+                style: TextStyle(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.8,
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
