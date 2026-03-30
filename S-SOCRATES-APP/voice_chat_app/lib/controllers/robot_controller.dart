@@ -95,9 +95,9 @@ class RobotController {
     debugPrint('📱 $msg');
     try {
       http.post(
-        Uri.parse('${ApiConfig.baseUrl}/robot/mic-done'),
+        Uri.parse('${ApiConfig.baseUrl}/robot/log'),
         headers: {'Content-Type': 'application/json'},
-        body: '{"debug_log": "$msg"}',
+        body: '{"message": "${msg.replaceAll('"', '\\"')}"}',
       );
     } catch (_) {}
   }

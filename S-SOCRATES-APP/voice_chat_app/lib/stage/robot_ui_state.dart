@@ -28,9 +28,9 @@ extension RobotUiStateX on RobotUiState {
       case RobotUiState.challenge:
         return 'Thách thức!';
       case RobotUiState.noVoice:
-        return 'Khong nghe ro';
+        return '';
       case RobotUiState.error:
-        return 'Mất kết nối';
+        return '';
     }
   }
 
@@ -39,19 +39,19 @@ extension RobotUiStateX on RobotUiState {
       case RobotUiState.idle:
         return const Color(0xFF00B4FF);
       case RobotUiState.listening:
-        return const Color(0xFF00FFCC);
+        return const Color(0xFF00FF00);
       case RobotUiState.uploading:
-        return const Color(0xFF00E0FF);
+        return const Color(0xFF8C00FF);
       case RobotUiState.thinking:
-        return const Color(0xFF4488FF);
+        return const Color(0xFF00FFC8);
       case RobotUiState.speaking:
         return const Color(0xFF00EEFF);
       case RobotUiState.challenge:
-        return const Color(0xFFFF6B35);
+        return const Color(0xFFFF9900);
       case RobotUiState.noVoice:
-        return const Color(0xFFFFA726);
+        return const Color(0xFFFFFF00);
       case RobotUiState.error:
-        return const Color(0xFFFF4455);
+        return const Color(0xFFFF0000);
     }
   }
 
