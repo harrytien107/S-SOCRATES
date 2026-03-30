@@ -187,6 +187,9 @@ class _OrbWithFacePainter extends CustomPainter {
 
     // Face overlay — drawn last (on top)
     _drawFace(canvas, ctr, outerR, color);
+
+    // Graduation Cap (UTH Personalization)
+    _drawGraduationCap(canvas, ctr, outerR + 10, color);
   }
 
   // ── Lat/lon wireframe ──────────────────────────────────────────
@@ -490,6 +493,92 @@ class _OrbWithFacePainter extends CustomPainter {
 
     canvas.drawArc(rect, startAngle, sweepAngle, false, glowPaint);
     canvas.drawArc(rect, startAngle, sweepAngle, false, solidPaint);
+  }
+
+  // ── GRADUATION CAP (UTH) ───────────────────────────────────────────────
+  void _drawGraduationCap(Canvas canvas, Offset ctr, double R, Color color) {
+    // Hover effect based on pulse
+    final bounceY = math.sin(pulse * math.pi * 2) * R * 0.025;
+    final cy = ctr.dy - R * 0.98 + bounceY; 
+    final cx = ctr.dx;
+
+    final glowPaint = Paint()
+      ..color = color.withValues(alpha: 0.50)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = R * 0.025
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+
+    final solidPaint = Paint()
+      ..color = color.withValues(alpha: 0.90)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = R * 0.012
+      ..isAntiAlias = true;
+
+    // Mortarboard (Diamond / Rhombus projection)
+    final boardW = R * 0.65;
+    final boardH = R * 0.20;
+    
+    final boardPath = Path()
+      ..moveTo(cx, cy - boardH) // top
+      ..lineTo(cx + boardW, cy) // right
+      ..lineTo(cx, cy + boardH) // bottom
+      ..lineTo(cx - boardW, cy) // left
+      ..close();
+
+    // Base (Skull cap)
+    final baseW = R * 0.35;
+    final baseTopY = cy + boardH * 0.53; // slightly below center
+    final baseBotY = cy + boardH * 1.8;
+
+    final basePath = Path()
+      ..moveTo(cx - baseW, baseTopY)
+      ..lineTo(cx - baseW, baseBotY)
+      // bottom curve
+      ..quadraticBezierTo(cx, baseBotY + R * 0.12, cx + baseW, baseBotY)
+      ..lineTo(cx + baseW, baseTopY);
+
+    // Tassel
+    final tasselPath = Path()
+      ..moveTo(cx, cy) // center knot
+      // droop down to the right
+      ..quadraticBezierTo(cx + boardW * 0.4, cy + boardH * 0.5, cx + boardW * 0.85, cy + boardH * 2.2);
+
+    // Draw lines
+    for (final p in [glowPaint, solidPaint]) {
+      canvas.drawPath(boardPath, p);
+      canvas.drawPath(basePath, p);
+      canvas.drawPath(tasselPath, p);
+      
+      // Center knot
+      canvas.drawCircle(Offset(cx, cy), R * 0.02, Paint()..color = p.color ..style=PaintingStyle.fill);
+      // Tassel fringe
+      canvas.drawCircle(Offset(cx + boardW * 0.85, cy + boardH * 2.2), R * 0.03, Paint()..color = p.color ..style=PaintingStyle.fill);
+    }
+
+    // "UTH" text on cap base
+    final textSpan = TextSpan(
+      text: 'UTH',
+      style: TextStyle(
+        color: color.withValues(alpha: 0.85),
+        fontSize: R * 0.16,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 2.0,
+        shadows: [
+          Shadow(
+            color: color,
+            blurRadius: 6.0,
+          )
+        ]
+      ),
+    );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    final textX = cx - textPainter.width / 2;
+    final textY = baseBotY - textPainter.height * 0.85;
+    textPainter.paint(canvas, Offset(textX, textY));
   }
 
   void _drawMouth(Canvas canvas, Offset ctr, double R, Color color) {
