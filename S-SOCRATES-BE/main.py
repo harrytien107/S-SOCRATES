@@ -78,11 +78,6 @@ _robot_mic_status = "idle"
 async def root():
     return {"status": "S-Socrates API is running clean and fast!"}
 
-@app.post("/chat")
-async def chat(req: ChatRequest):
-    response_text = process_chat_message(req.message)
-    return {"response": response_text}
-
 @app.post("/stt")
 async def speech_to_text(file: UploadFile = File(...)):
     try:
@@ -269,7 +264,3 @@ async def send_to_robot(req: RobotCommand):
 async def get_robot_command():
     # Frontend deduplicates via timestamp, do not destroy the command.
     return _latest_robot_command
-
-@app.get("/latest-command")
-async def get_latest_command():
-    return await get_robot_command()
