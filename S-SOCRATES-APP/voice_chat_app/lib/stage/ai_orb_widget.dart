@@ -277,7 +277,7 @@ class _OrbWithFacePainter extends CustomPainter {
   void _drawFace(Canvas canvas, Offset ctr, double R, Color color) {
     final e = expr;
     // ── Eye bars ─────────────────────────────────────────────────
-    if (state == RobotUiState.thinking) {
+    if (state == RobotUiState.uploading) {
       _drawThinkingWaveEye(
         canvas,
         center: Offset(
@@ -305,7 +305,37 @@ class _OrbWithFacePainter extends CustomPainter {
         color: color,
         phase: innerAngleY * 1.8 + 0.7,
       );
+    } else if (state == RobotUiState.thinking) {
+      _drawRotatingCircleEye(
+        canvas,
+        center: Offset(
+          ctr.dx - e.eyeSpread * R,
+          ctr.dy + (e.eyeVertical + e.leftVOff) * R,
+        ),
+        radius: (e.eyeHalfW + e.eyeBarH) / 2 * R * 1.4,
+        opacity: e.eyeOpacity,
+        color: color,
+        phase: innerAngleY * 2.5,
+      );
+
+      _drawRotatingCircleEye(
+        canvas,
+        center: Offset(
+          ctr.dx + e.eyeSpread * R,
+          ctr.dy + (e.eyeVertical + e.rightVOff) * R,
+        ),
+        radius: (e.eyeHalfW + e.eyeBarH) / 2 * R * 1.4,
+        opacity: e.eyeOpacity,
+        color: color,
+        phase: innerAngleY * 2.5 + math.pi,
+      );
     } else {
+      double animHh = e.eyeBarH * R;
+      if (state == RobotUiState.listening) {
+        // Continuous blinking: sinusoidal variation between 0.1 and 1.0
+        animHh *= (0.55 + 0.45 * math.sin(innerAngleY * 8));
+      }
+
       _drawEye(
         canvas,
         center: Offset(
@@ -313,7 +343,7 @@ class _OrbWithFacePainter extends CustomPainter {
           ctr.dy + (e.eyeVertical + e.leftVOff) * R,
         ),
         hw: e.eyeHalfW * R,
-        hh: e.eyeBarH * R,
+        hh: animHh,
         tilt: e.leftTilt,
         opacity: e.eyeOpacity,
         color: color,
@@ -326,7 +356,7 @@ class _OrbWithFacePainter extends CustomPainter {
           ctr.dy + (e.eyeVertical + e.rightVOff) * R,
         ),
         hw: e.eyeHalfW * R,
-        hh: e.eyeBarH * R,
+        hh: animHh,
         tilt: e.rightTilt,
         opacity: e.eyeOpacity,
         color: color,
@@ -426,6 +456,40 @@ class _OrbWithFacePainter extends CustomPainter {
     canvas.drawRRect(rr, solidPaint);
 
     canvas.restore();
+  }
+
+  void _drawRotatingCircleEye(
+    Canvas canvas, {
+    required Offset center,
+    required double radius,
+    required double opacity,
+    required Color color,
+    required double phase,
+  }) {
+    if (opacity < 0.01 || radius < 1) return;
+
+    final glowPaint = Paint()
+      ..color = color.withValues(alpha: opacity * 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = radius * 0.4
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+
+    final solidPaint = Paint()
+      ..color = color.withValues(alpha: opacity)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = radius * 0.25
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    // Draw an arc from phase to phase + PI*1.5
+    final startAngle = phase;
+    final sweepAngle = math.pi * 1.5;
+
+    canvas.drawArc(rect, startAngle, sweepAngle, false, glowPaint);
+    canvas.drawArc(rect, startAngle, sweepAngle, false, solidPaint);
   }
 
   void _drawMouth(Canvas canvas, Offset ctr, double R, Color color) {
