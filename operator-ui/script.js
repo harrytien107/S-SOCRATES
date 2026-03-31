@@ -79,6 +79,14 @@ async function syncMicStatusFromBackend() {
         const resp = await fetch(`${base}/robot/mic-status`);
         if (!resp.ok) return;
         const data = await resp.json();
+        
+        // Print transparent logs from robot Flutter App
+        if (data.logs && Array.isArray(data.logs)) {
+            data.logs.forEach(log => {
+                addLog(`📱 ROBOT: ${log}`);
+            });
+        }
+
         const status = data.mic_status || 'idle';
         if (status === _lastSyncedStatus) return;
         _lastSyncedStatus = status;

@@ -56,10 +56,8 @@ class _AiOrbWidgetState extends State<AiOrbWidget>
 
     setState(() {
       // Sphere rotation
-      _outerAngleY =
-          (_outerAngleY + s.outerRotSpeed * dt) % (2 * math.pi);
-      _innerAngleY =
-          (_innerAngleY + s.innerRotSpeed * dt) % (2 * math.pi);
+      _outerAngleY = (_outerAngleY + s.outerRotSpeed * dt) % (2 * math.pi);
+      _innerAngleY = (_innerAngleY + s.innerRotSpeed * dt) % (2 * math.pi);
 
       // Pulse oscillation
       final pDelta = s.pulseSpeed * dt;
@@ -140,37 +138,7 @@ class _OrbWithFacePainter extends CustomPainter {
     required this.expr,
   });
 
-  // ── Icosahedron data ───────────────────────────────────────────
-  static const double _phi = 1.6180339887498949;
-  static final double _il = math.sqrt(1 + _phi * _phi);
 
-  static final List<List<double>> _icoV = [
-    [-1 / _il, _phi / _il, 0],
-    [1 / _il, _phi / _il, 0],
-    [-1 / _il, -_phi / _il, 0],
-    [1 / _il, -_phi / _il, 0],
-    [0, -1 / _il, _phi / _il],
-    [0, 1 / _il, _phi / _il],
-    [0, -1 / _il, -_phi / _il],
-    [0, 1 / _il, -_phi / _il],
-    [_phi / _il, 0, -1 / _il],
-    [_phi / _il, 0, 1 / _il],
-    [-_phi / _il, 0, -1 / _il],
-    [-_phi / _il, 0, 1 / _il],
-  ];
-
-  static const List<List<int>> _icoE = [
-    [0, 1], [0, 5], [0, 7], [0, 10], [0, 11],
-    [1, 5], [1, 7], [1, 8], [1, 9],
-    [2, 3], [2, 4], [2, 6], [2, 10], [2, 11],
-    [3, 4], [3, 6], [3, 8], [3, 9],
-    [4, 5], [4, 9], [4, 11],
-    [5, 9], [5, 11],
-    [6, 7], [6, 8], [6, 10],
-    [7, 8], [7, 10],
-    [8, 9],
-    [10, 11],
-  ];
 
   // ── 3D helpers ─────────────────────────────────────────────────
   List<double> _rotY(double x, double y, double z, double a) {
@@ -197,7 +165,6 @@ class _OrbWithFacePainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     final ctr = Offset(size.width / 2, size.height / 2);
     final outerR = sphereRadius;
-    final innerR = sphereRadius * 0.48;
     final color = state.primaryColor;
 
     // Ambient glow
@@ -206,28 +173,34 @@ class _OrbWithFacePainter extends CustomPainter {
       ctr,
       outerR * 1.35,
       Paint()
-        ..shader = RadialGradient(colors: [
-          color.withValues(alpha: glowAlpha),
-          color.withValues(alpha: 0),
-        ]).createShader(
-            Rect.fromCircle(center: ctr, radius: outerR * 1.35))
+        ..shader = RadialGradient(
+          colors: [
+            color.withValues(alpha: glowAlpha),
+            color.withValues(alpha: 0),
+          ],
+        ).createShader(Rect.fromCircle(center: ctr, radius: outerR * 1.35))
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 45),
     );
 
     // Outer lat/lon sphere
     _drawLatLon(canvas, ctr, outerR, outerAngleY, 0.0, color);
 
-    // Inner icosphere
-    _drawIco(canvas, ctr, innerR, innerAngleY, math.pi / 8 + 0.04 * pulse,
-        color);
-
     // Face overlay — drawn last (on top)
     _drawFace(canvas, ctr, outerR, color);
+
+    // Graduation Cap (UTH Personalization)
+    _drawGraduationCap(canvas, ctr, outerR + 10, color);
   }
 
   // ── Lat/lon wireframe ──────────────────────────────────────────
-  void _drawLatLon(Canvas canvas, Offset ctr, double r, double rotY,
-      double tiltX, Color color) {
+  void _drawLatLon(
+    Canvas canvas,
+    Offset ctr,
+    double r,
+    double rotY,
+    double tiltX,
+    Color color,
+  ) {
     const latN = 11;
     const lonN = 18;
     const pts = 60;
@@ -252,7 +225,11 @@ class _OrbWithFacePainter extends CustomPainter {
       final avgZ = sumZ / (pts + 1);
       final alpha = _depthAlpha(avgZ, 0.12, 0.78);
       _drawPolyline(
-          canvas, screenPts, color.withValues(alpha: alpha), avgZ > 0 ? 0.8 : 0.4);
+        canvas,
+        screenPts,
+        color.withValues(alpha: alpha),
+        avgZ > 0 ? 0.8 : 0.4,
+      );
     }
 
     // Longitude meridians
@@ -275,7 +252,11 @@ class _OrbWithFacePainter extends CustomPainter {
       final avgZ = sumZ / (pts + 1);
       final alpha = _depthAlpha(avgZ, 0.10, 0.75);
       _drawPolyline(
-          canvas, screenPts, color.withValues(alpha: alpha), avgZ > 0 ? 0.8 : 0.4);
+        canvas,
+        screenPts,
+        color.withValues(alpha: alpha),
+        avgZ > 0 ? 0.8 : 0.4,
+      );
     }
   }
 
@@ -286,54 +267,20 @@ class _OrbWithFacePainter extends CustomPainter {
       path.lineTo(pts[i].dx, pts[i].dy);
     }
     canvas.drawPath(
-        path,
-        Paint()
-          ..color = color
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = sw
-          ..isAntiAlias = true);
-  }
-
-  // ── Inner icosphere ────────────────────────────────────────────
-  void _drawIco(Canvas canvas, Offset ctr, double r, double rotY, double rotX,
-      Color color) {
-    final glow = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.4
-      ..isAntiAlias = true
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.5);
-    final sharp = Paint()
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 1.2
-      ..isAntiAlias = true;
-
-    for (final edge in _icoE) {
-      final va = _icoV[edge[0]];
-      final vb = _icoV[edge[1]];
-
-      final ra = _rotY(va[0], va[1], va[2], rotY);
-      final ra2 = _rotX(ra[0], ra[1], ra[2], rotX);
-      final ptA = _proj(ra2[0], ra2[1], ra2[2], ctr, r);
-
-      final rb = _rotY(vb[0], vb[1], vb[2], rotY);
-      final rb2 = _rotX(rb[0], rb[1], rb[2], rotX);
-      final ptB = _proj(rb2[0], rb2[1], rb2[2], ctr, r);
-
-      final avgZ = (ra2[2] + rb2[2]) / 2;
-      final alpha = _depthAlpha(avgZ, 0.25, 1.0);
-
-      glow.color = color.withValues(alpha: alpha * 0.45);
-      sharp.color = color.withValues(alpha: alpha);
-      canvas.drawLine(ptA, ptB, glow);
-      canvas.drawLine(ptA, ptB, sharp);
-    }
+      path,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = sw
+        ..isAntiAlias = true,
+    );
   }
 
   // ── FACE OVERLAY ───────────────────────────────────────────────
   void _drawFace(Canvas canvas, Offset ctr, double R, Color color) {
     final e = expr;
     // ── Eye bars ─────────────────────────────────────────────────
-    if (state == RobotUiState.thinking) {
+    if (state == RobotUiState.uploading) {
       _drawThinkingWaveEye(
         canvas,
         center: Offset(
@@ -361,7 +308,37 @@ class _OrbWithFacePainter extends CustomPainter {
         color: color,
         phase: innerAngleY * 1.8 + 0.7,
       );
+    } else if (state == RobotUiState.thinking) {
+      _drawRotatingCircleEye(
+        canvas,
+        center: Offset(
+          ctr.dx - e.eyeSpread * R,
+          ctr.dy + (e.eyeVertical + e.leftVOff) * R,
+        ),
+        radius: (e.eyeHalfW + e.eyeBarH) / 2 * R * 1.4,
+        opacity: e.eyeOpacity,
+        color: color,
+        phase: innerAngleY * 2.5,
+      );
+
+      _drawRotatingCircleEye(
+        canvas,
+        center: Offset(
+          ctr.dx + e.eyeSpread * R,
+          ctr.dy + (e.eyeVertical + e.rightVOff) * R,
+        ),
+        radius: (e.eyeHalfW + e.eyeBarH) / 2 * R * 1.4,
+        opacity: e.eyeOpacity,
+        color: color,
+        phase: innerAngleY * 2.5 + math.pi,
+      );
     } else {
+      double animHh = e.eyeBarH * R;
+      if (state == RobotUiState.listening) {
+        // Continuous blinking: sinusoidal variation between 0.1 and 1.0
+        animHh *= (0.55 + 0.45 * math.sin(innerAngleY * 8));
+      }
+
       _drawEye(
         canvas,
         center: Offset(
@@ -369,7 +346,7 @@ class _OrbWithFacePainter extends CustomPainter {
           ctr.dy + (e.eyeVertical + e.leftVOff) * R,
         ),
         hw: e.eyeHalfW * R,
-        hh: e.eyeBarH * R,
+        hh: animHh,
         tilt: e.leftTilt,
         opacity: e.eyeOpacity,
         color: color,
@@ -382,7 +359,7 @@ class _OrbWithFacePainter extends CustomPainter {
           ctr.dy + (e.eyeVertical + e.rightVOff) * R,
         ),
         hw: e.eyeHalfW * R,
-        hh: e.eyeBarH * R,
+        hh: animHh,
         tilt: e.rightTilt,
         opacity: e.eyeOpacity,
         color: color,
@@ -468,7 +445,10 @@ class _OrbWithFacePainter extends CustomPainter {
       ..style = PaintingStyle.fill;
 
     final rect = Rect.fromCenter(
-        center: Offset.zero, width: hw * 2, height: hh * 2);
+      center: Offset.zero,
+      width: hw * 2,
+      height: hh * 2,
+    );
     final rr = RRect.fromRectAndRadius(rect, Radius.circular(hh));
 
     canvas.save();
@@ -481,12 +461,133 @@ class _OrbWithFacePainter extends CustomPainter {
     canvas.restore();
   }
 
+  void _drawRotatingCircleEye(
+    Canvas canvas, {
+    required Offset center,
+    required double radius,
+    required double opacity,
+    required Color color,
+    required double phase,
+  }) {
+    if (opacity < 0.01 || radius < 1) return;
+
+    final glowPaint = Paint()
+      ..color = color.withValues(alpha: opacity * 0.55)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = radius * 0.4
+      ..strokeCap = StrokeCap.round
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+
+    final solidPaint = Paint()
+      ..color = color.withValues(alpha: opacity)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = radius * 0.25
+      ..strokeCap = StrokeCap.round
+      ..isAntiAlias = true;
+
+    final rect = Rect.fromCircle(center: center, radius: radius);
+
+    // Draw an arc from phase to phase + PI*1.5
+    final startAngle = phase;
+    final sweepAngle = math.pi * 1.5;
+
+    canvas.drawArc(rect, startAngle, sweepAngle, false, glowPaint);
+    canvas.drawArc(rect, startAngle, sweepAngle, false, solidPaint);
+  }
+
+  // ── GRADUATION CAP (UTH) ───────────────────────────────────────────────
+  void _drawGraduationCap(Canvas canvas, Offset ctr, double R, Color color) {
+    // Hover effect based on pulse
+    final bounceY = math.sin(pulse * math.pi * 2) * R * 0.025;
+    final cy = ctr.dy - R * 0.98 + bounceY; 
+    final cx = ctr.dx;
+
+    final glowPaint = Paint()
+      ..color = color.withValues(alpha: 0.50)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = R * 0.025
+      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+
+    final solidPaint = Paint()
+      ..color = color.withValues(alpha: 0.90)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = R * 0.012
+      ..isAntiAlias = true;
+
+    // Mortarboard (Diamond / Rhombus projection)
+    final boardW = R * 0.65;
+    final boardH = R * 0.20;
+    
+    final boardPath = Path()
+      ..moveTo(cx, cy - boardH) // top
+      ..lineTo(cx + boardW, cy) // right
+      ..lineTo(cx, cy + boardH) // bottom
+      ..lineTo(cx - boardW, cy) // left
+      ..close();
+
+    // Base (Skull cap)
+    final baseW = R * 0.35;
+    final baseTopY = cy + boardH * 0.53; // slightly below center
+    final baseBotY = cy + boardH * 1.8;
+
+    final basePath = Path()
+      ..moveTo(cx - baseW, baseTopY)
+      ..lineTo(cx - baseW, baseBotY)
+      // bottom curve
+      ..quadraticBezierTo(cx, baseBotY + R * 0.12, cx + baseW, baseBotY)
+      ..lineTo(cx + baseW, baseTopY);
+
+    // Tassel
+    final tasselPath = Path()
+      ..moveTo(cx, cy) // center knot
+      // droop down to the right
+      ..quadraticBezierTo(cx + boardW * 0.4, cy + boardH * 0.5, cx + boardW * 0.85, cy + boardH * 2.2);
+
+    // Draw lines
+    for (final p in [glowPaint, solidPaint]) {
+      canvas.drawPath(boardPath, p);
+      canvas.drawPath(basePath, p);
+      canvas.drawPath(tasselPath, p);
+      
+      // Center knot
+      canvas.drawCircle(Offset(cx, cy), R * 0.02, Paint()..color = p.color ..style=PaintingStyle.fill);
+      // Tassel fringe
+      canvas.drawCircle(Offset(cx + boardW * 0.85, cy + boardH * 2.2), R * 0.03, Paint()..color = p.color ..style=PaintingStyle.fill);
+    }
+
+    // "UTH" text on cap base
+    final textSpan = TextSpan(
+      text: 'UTH',
+      style: TextStyle(
+        color: color.withValues(alpha: 0.85),
+        fontSize: R * 0.16,
+        fontWeight: FontWeight.w900,
+        letterSpacing: 2.0,
+        shadows: [
+          Shadow(
+            color: color,
+            blurRadius: 6.0,
+          )
+        ]
+      ),
+    );
+    final textPainter = TextPainter(
+      text: textSpan,
+      textDirection: TextDirection.ltr,
+    );
+    textPainter.layout();
+    final textX = cx - textPainter.width / 2;
+    final textY = baseBotY - textPainter.height * 0.85;
+    textPainter.paint(canvas, Offset(textX, textY));
+  }
+
   void _drawMouth(Canvas canvas, Offset ctr, double R, Color color) {
     final e = expr;
     final hw = e.mouthHalfW * R;
     final vy = ctr.dy + e.mouthVertical * R;
 
-    final dynamicThickness = e.mouthThickness +
+    final dynamicThickness =
+        e.mouthThickness +
         (state == RobotUiState.speaking ? 0.008 * speakCycle : 0.0);
 
     final glowPaint = Paint()
@@ -560,7 +661,7 @@ class _OrbWithFacePainter extends CustomPainter {
     required Offset ctr,
     required double hw,
     required double vy,
-    required double openH,   // current open height (0=closed)
+    required double openH, // current open height (0=closed)
     required double skew,
     required Paint glowPaint,
     required Paint solidPaint,
@@ -593,8 +694,13 @@ class _OrbWithFacePainter extends CustomPainter {
   /// Broken/glitch mouth for error state — dashed segments with slight offsets
   static const List<double> _brokenOffsets = [2.0, -3.0, 1.5, -2.5];
 
-  void _drawBrokenMouth(Canvas canvas, Offset left, Offset right,
-      Paint glowP, Paint solidP) {
+  void _drawBrokenMouth(
+    Canvas canvas,
+    Offset left,
+    Offset right,
+    Paint glowP,
+    Paint solidP,
+  ) {
     final totalW = right.dx - left.dx;
     const segCount = 4;
     final segW = totalW / (segCount * 2 - 1);

@@ -1,15 +1,15 @@
 :root {
-    --bg-deep: #020617;
+    --bg-deep: #020512;
     --bg-panel: #0f172a;
     --bg-card: #1e293b;
-    --cyan: #22d3ee;
-    --teal: #14b8a6;
-    --accent: #22d3ee;
+    --cyan: #0cd2da;     /* UTH Brand Color */
+    --teal: #0cd2da;     /* Darker teal for gradients */
+    --accent: #0cd2da;
     --text-main: #f8fafc;
     --text-dim: #94a3b8;
     --border: #334155;
     --danger: #ef4444;
-    --primary-glow: rgba(34, 211, 238, 0.3);
+    --primary-glow: rgba(0, 251, 255, 0.3);
 }
 
 * { box-sizing: border-box; }
@@ -75,7 +75,7 @@ main {
 
 .panel-header {
     padding: 1rem;
-    background: rgba(255,255,255,0.03);
+    background: rgba(255, 0, 0, 0.03);
     border-bottom: 1px solid var(--border);
     text-transform: uppercase;
     font-size: 0.75rem;

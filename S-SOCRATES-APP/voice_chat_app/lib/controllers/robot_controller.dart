@@ -1,9 +1,9 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:voice_chat_app/services/api_service.dart';
 import 'package:voice_chat_app/services/api_config.dart';
 import 'package:voice_chat_app/services/agent_api.dart';
 import 'package:voice_chat_app/services/tts_service.dart';
@@ -95,9 +95,9 @@ class RobotController {
     debugPrint('📱 $msg');
     try {
       http.post(
-        Uri.parse('${ApiConfig.baseUrl}/robot/mic-done'),
+        Uri.parse('${ApiConfig.baseUrl}/robot/log'),
         headers: {'Content-Type': 'application/json'},
-        body: '{"debug_log": "$msg"}',
+        body: '{"message": "${msg.replaceAll('"', '\\"')}"}',
       );
     } catch (_) {}
   }
@@ -215,11 +215,26 @@ class RobotController {
   Future<void> _pollCommands() async {
     if (_isProcessing) return;
 
-    debugPrint('Polling backend at: ${ApiConfig.baseUrl}');
-    final pollResult = await ApiService.getLatestCommand();
-    final command = pollResult.command;
+    Map<String, dynamic>? command;
+    bool reachable = false;
 
-    if (pollResult.reachable) {
+    try {
+      final response = await http
+          .get(Uri.parse('${ApiConfig.baseUrl}/robot-command'))
+          .timeout(const Duration(seconds: 4));
+
+      if (response.statusCode == 200) {
+        reachable = true;
+        final data = jsonDecode(response.body);
+        if (data != null && data is Map<String, dynamic>) {
+          command = data;
+        }
+      }
+    } catch (e) {
+      debugPrint('Polling Error: $e');
+    }
+
+    if (reachable) {
       _pollFailureCount = 0;
       if (!isBackendReachable.value) {
         isBackendReachable.value = true;
