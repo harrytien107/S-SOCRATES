@@ -1,5 +1,7 @@
 import time
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
@@ -23,6 +25,33 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Thống nhất thư mục Operator-UI để Serve Frontend qua FastAPI
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ui_dir = os.path.join(BASE_DIR, "operator-ui")
+if os.path.exists(ui_dir):
+    app.mount("/operator", StaticFiles(directory=ui_dir, html=True), name="operator")
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+ws_manager = ConnectionManager()
 
 load_dotenv()
 
@@ -153,15 +182,16 @@ async def mic_control(req: MicControlRequest):
     global _robot_mic_status
     if req.action == "start":
         _robot_mic_status = "listening"
-        return {"status": "Robot mic activated", "mic_status": _robot_mic_status}
     elif req.action == "stop":
         _robot_mic_status = "processing"
-        return {"status": "Robot mic stopped, waiting for audio upload", "mic_status": _robot_mic_status}
     elif req.action == "cancel":
         _robot_mic_status = "canceled"
-        return {"status": "Robot mic canceled, throwing away audio", "mic_status": _robot_mic_status}
     else:
         return {"error": "Invalid action. Use 'start', 'stop', or 'cancel'."}
+        
+    # Phát qua WebSocket để UI cập nhật ngay lập tức
+    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+    return {"status": f"Robot mic {req.action}", "mic_status": _robot_mic_status}
 
 @app.get("/robot/mic-status")
 async def get_mic_status():
@@ -173,7 +203,31 @@ async def mic_done():
     """App gọi sau khi đã upload xong audio, báo hiệu hoàn tất chu kỳ."""
     global _robot_mic_status
     _robot_mic_status = "idle"
+    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
     return {"status": "Mic cycle complete", "mic_status": _robot_mic_status}
+
+class LogRequest(BaseModel):
+    message: str
+
+@app.post("/robot/log")
+async def receive_robot_log(req: LogRequest):
+    await ws_manager.broadcast({"type": "log", "message": req.message})
+    return {"status": "Log broadcasted"}
+
+@app.websocket("/ws/operator")
+async def websocket_operator(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        # Gửi ngay trạng thái hiện tại khi mới kết nối
+        await websocket.send_json({"type": "mic_status", "status": _robot_mic_status})
+        if _latest_transcript:
+            await websocket.send_json({"type": "transcript", "data": _latest_transcript})
+            
+        while True:
+            # Chờ nhận lệnh nếu UI muốn gửi qua WS, tạm thời chỉ listen để giữ connection
+            data = await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
 
 # =========================
 # Orchestration Endpoints
@@ -204,6 +258,7 @@ async def process_audio(file: UploadFile = File(...)):
             "transcript": transcript,
             "candidates": candidates
         }
+        await ws_manager.broadcast({"type": "transcript", "data": _latest_transcript})
         return _latest_transcript
     except Exception as e:
         return {"error": str(e)}

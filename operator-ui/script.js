@@ -16,7 +16,7 @@ function formatTimer(ms) {
 
 // === Gửi lệnh Mic tới Backend ===
 async function _sendMicAction(action) {
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
     try {
         await fetch(`${base}/operator/mic-control`, {
             method: 'POST',
@@ -33,7 +33,7 @@ async function _sendMicAction(action) {
 // === QUICK SEND — Gửi emotion trực tiếp qua /send-to-robot ===
 // Không cần bấm SEND TO BOT. Dùng kênh đã hoạt động tốt.
 async function quickSendEmotion(emo, btn) {
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
 
     // Highlight nút được chọn  
     setEmotion(emo, btn, false);
@@ -70,41 +70,74 @@ async function cancelRobotMic() {
     }
 }
 
-// === ĐỒNG BỘ TRẠNG THÁI TỪ APP (khi App chạm Orb thủ công) ===
+// === WEBSOCKET CONNECTION ===
+let ws = null;
+let reconnectTimer = null;
 let _lastSyncedStatus = 'idle';
 
-async function syncMicStatusFromBackend() {
-    const base = document.getElementById('api-base').value;
-    try {
-        const resp = await fetch(`${base}/robot/mic-status`);
-        if (!resp.ok) return;
-        const data = await resp.json();
-        
-        // Print transparent logs from robot Flutter App
-        if (data.logs && Array.isArray(data.logs)) {
-            data.logs.forEach(log => {
-                addLog(`📱 ROBOT: ${log}`);
-            });
-        }
+function connectWebSocket() {
+    const baseInput = window.location.origin;
+    // Chuyển HTTP/HTTPS -> WS/WSS
+    let wsUrl = baseInput.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/operator';
+    
+    addLog('🔌 Connecting to WebSocket...');
+    ws = new WebSocket(wsUrl);
 
-        const status = data.mic_status || 'idle';
-        if (status === _lastSyncedStatus) return;
-        _lastSyncedStatus = status;
+    ws.onopen = () => {
+        document.getElementById('online-dot').classList.add('active');
+        addLog("🟢 WebSocket Connected!");
+        if (reconnectTimer) clearInterval(reconnectTimer);
+    };
 
-        if (status === 'listening' && !isMicActive) {
-            isMicActive = true;
-            micStartTime = Date.now();
-            addLog(`🎙️ [Sync] App tự bật Mic.`);
-        } else if (status !== 'listening' && isMicActive) {
-            isMicActive = false;
-            if (status === 'processing') addLog(`📤 [Sync] App đang gửi audio lên Server.`);
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            
+            if (msg.type === 'mic_status') {
+                const status = msg.status || 'idle';
+                if (status === _lastSyncedStatus) return;
+                _lastSyncedStatus = status;
+
+                if (status === 'listening' && !isMicActive) {
+                    isMicActive = true;
+                    addLog(`🎙️ [Sync] App bật Mic.`);
+                } else if (status !== 'listening' && isMicActive) {
+                    isMicActive = false;
+                    if (status === 'processing') addLog(`📤 [Sync] App gửi audio lên Server.`);
+                }
+            }
+            
+            if (msg.type === 'transcript') {
+                currentData = msg.data;
+                displayWorkflow(msg.data);
+                addLog("⚡ Received real-time voice input from Robot.");
+            }
+
+            if (msg.type === 'log') {
+                addLog(`📱 ROBOT: ${msg.message}`);
+            }
+
+        } catch (e) {
+            console.error('WS parse error:', e);
         }
-    } catch (_) {}
+    };
+
+    ws.onclose = () => {
+        document.getElementById('online-dot').classList.remove('active');
+        addLog("🔴 WebSocket Disconnected. Reconnecting...");
+        ws = null;
+        if (!reconnectTimer) {
+            reconnectTimer = setInterval(connectWebSocket, 3000);
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.error("WebSocket Error: ", error);
+        ws.close();
+    };
 }
 
 window.onload = () => {
-    const saved = localStorage.getItem('socrates_api_base');
-    if (saved) document.getElementById('api-base').value = saved;
     
     const preview = document.getElementById('final-preview');
     preview.addEventListener('input', updateSendButton);
@@ -115,8 +148,8 @@ window.onload = () => {
     updateSendButton();
     addLog("Console Ready.");
     
-    // Poll trạng thái Mic từ Backend mỗi 2 giây để đồng bộ khi App chạm Orb
-    setInterval(syncMicStatusFromBackend, 2000);
+    // Khởi tạo WebSocket thay vì setInterval polling
+    connectWebSocket();
 };
 
 function addLog(msg) {
@@ -184,8 +217,7 @@ function togglePreviewModal(show) {
 }
 
 async function saveSettings() {
-    const base = document.getElementById('api-base').value;
-    localStorage.setItem('socrates_api_base', base);
+    const base = window.location.origin;
 
     // Push audio config to backend
     try {
@@ -211,7 +243,7 @@ async function saveSettings() {
 }
 
 async function syncConfigs() {
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
     try {
         const res = await fetch(`${base}/configs`);
         if (!res.ok) return;
@@ -249,46 +281,18 @@ async function syncConfigs() {
 }
 
 function checkConnection() {
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
     fetch(`${base}/`).then(() => {
-        document.getElementById('online-dot').classList.add('active');
-        addLog("System Online.");
-        
-        // Start polling for transcripts once connected
-        if (!window.transcriptPollInterval) {
-            window.transcriptPollInterval = setInterval(pollTranscript, 2000);
-        }
+        addLog("HTTP API Online. Waiting for WS...");
     }).catch(() => {
-        document.getElementById('online-dot').classList.remove('active');
         addLog("Backend Offline.");
-        if (window.transcriptPollInterval) {
-            clearInterval(window.transcriptPollInterval);
-            window.transcriptPollInterval = null;
-        }
     });
-}
-
-async function pollTranscript() {
-    const base = document.getElementById('api-base').value;
-    try {
-        const response = await fetch(`${base}/latest-transcript`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data && data.transcript) {
-                currentData = data;
-                displayWorkflow(data);
-                addLog("Received new voice input from Robot.");
-            }
-        }
-    } catch (err) {
-        // Ignore silent polling errors
-    }
 }
 
 async function handleFileUpload(input) {
     if (!input.files || !input.files[0]) return;
     const file = input.files[0];
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
     
     toggleModal(false);
     addLog(`Audio File: ${file.name}`);
@@ -363,7 +367,7 @@ function updateSendButton() {
 }
 
 async function useAI() {
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
     if (!currentData || !currentData.transcript) {
         // Disabled logic via updateSendButton or similar, no alert
         return;
@@ -402,7 +406,7 @@ async function useAI() {
 }
 
 async function useGemini() {
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
     if (!currentData || !currentData.transcript) {
         return;
     }
@@ -470,7 +474,7 @@ async function setEmotionAndRecord(btn) {
 }
 
 async function sendToRobot() {
-    const base = document.getElementById('api-base').value;
+    const base = window.location.origin;
     const rawText = document.getElementById('final-preview').innerText.trim();
     if (rawText.length > 0 && selectedEmotion === 'neutral') {
         setEmotion('speaking', null, false);

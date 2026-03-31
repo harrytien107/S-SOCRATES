@@ -298,7 +298,7 @@ main {
     width: 450px;
     border-radius: 16px;
     border: 1px solid var(--border);
-    padding: 2rem;
+    padding: 10px;
     position: relative;
 }
 .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }

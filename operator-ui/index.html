@@ -12,7 +12,7 @@
     <header>
         <div class="logo">
             <img src="assets/logo_full.png" alt="UTH Logo" style="height: 32px; object-fit: contain; margin-right: 8px;">
-            S-SOCRATES <span>OPERATOR CONSOLE V2.0</span>
+            S-SOCRATES <span>OPERATOR CONSOLE</span>
         </div>
         <div style="display: flex; gap: 15px; align-items: center;">
             <div id="status-text" style="font-size: 0.75rem; font-weight: 600; color: var(--text-dim);">
@@ -25,8 +25,6 @@
     <main>
         <!-- Column 1: Live Input -->
         <section class="panel">
-
-
             <div class="panel-header">Live Guest Transcript</div>
             <div class="scroll-area">
                 <div class="transcript-container" id="transcript-box">
@@ -95,7 +93,7 @@
 
     <!-- Settings Modal -->
     <div class="modal" id="settings-modal">
-        <div class="modal-content" style="max-width: 520px;">
+        <div class="modal-content" style="max-width: 520px; max-height: 730px;">
             <div class="modal-header">
                 <h2 style="margin: 0; color: var(--cyan);">⚙ Settings</h2>
                 <button class="settings-btn" onclick="toggleModal(false)">✕</button>
@@ -104,10 +102,6 @@
             <!-- SYSTEM ROUTING -->
             <div style="margin-bottom: 1rem;">
                 <div style="font-size: 0.65rem; font-weight: 700; color: var(--cyan); letter-spacing: 2px; margin-bottom: 8px;">SYSTEM ROUTING</div>
-                <div class="input-group">
-                    <label>API BASE URL</label>
-                    <input type="text" id="api-base" value="http://localhost:8000">
-                </div>
                 <div class="input-group">
                     <label>TEST AUDIO UPLOAD (.WAV)</label>
                     <input type="file" id="file-upload" accept="audio/wav" onchange="handleFileUpload(this)">
@@ -139,8 +133,10 @@
                     <input type="range" id="cfg-tts-speed" min="0.5" max="2.0" step="0.1" value="1.0"
                         oninput="document.getElementById('speed-display').innerText = this.value + 'x'"
                         style="width: 100%; accent-color: var(--cyan);">
-                    <div style="display: flex; justify-content: space-between; font-size: 0.6rem; color: var(--text-dim);">
-                        <span>🐢 0.5x</span><span>🏃 1.0x</span><span>🚀 2.0x</span>
+                    <div style="display: flex; font-size: 0.6rem; color: var(--text-dim);">
+                        <span>🐢 0.5x</span>
+                        <span style="padding-left: 92px;">🏃 1.0x</span>
+                        <span style="padding-left: 226px;">🚀 2.0x</span>
                     </div>
                 </div>
 
