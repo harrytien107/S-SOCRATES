@@ -1,14 +1,14 @@
 import time
-from fastapi import FastAPI, UploadFile, File, BackgroundTasks
+import json
+from fastapi import FastAPI, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+import os
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
 from dotenv import load_dotenv
 
 from services.stt_service import process_stt_request
-from services.chat_orchestrator import process_chat_message
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
-from services.semantic_router import semantic_router
 from services.llm_service import ask_socrates, switch_gemini_model, AVAILABLE_GEMINI_MODELS
 
 # =========================
@@ -23,6 +23,35 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Thống nhất thư mục Operator-UI để Serve Frontend qua FastAPI
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ui_dir = os.path.join(BASE_DIR, "operator-ui")
+if os.path.exists(ui_dir):
+    app.mount("/operator", StaticFiles(directory=ui_dir, html=True), name="operator")
+
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                pass
+
+
+ws_manager = ConnectionManager()
 
 load_dotenv()
 
@@ -70,6 +99,13 @@ GLOBAL_AUDIO_CONFIG = {
 # Remote Mic Control – Cột đèn giao thông giữa Operator và App
 # idle = ngủ, listening = đang thu âm, processing = đang xử lý STT
 _robot_mic_status = "idle"
+
+QA_PRESETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qa_presets.json")
+
+
+def load_qa_presets():
+    with open(QA_PRESETS_PATH, "r", encoding="utf-8") as file:
+        return json.load(file)
 
 # =========================
 # Endpoints
@@ -153,15 +189,15 @@ async def mic_control(req: MicControlRequest):
     global _robot_mic_status
     if req.action == "start":
         _robot_mic_status = "listening"
-        return {"status": "Robot mic activated", "mic_status": _robot_mic_status}
     elif req.action == "stop":
         _robot_mic_status = "processing"
-        return {"status": "Robot mic stopped, waiting for audio upload", "mic_status": _robot_mic_status}
     elif req.action == "cancel":
         _robot_mic_status = "canceled"
-        return {"status": "Robot mic canceled, throwing away audio", "mic_status": _robot_mic_status}
     else:
         return {"error": "Invalid action. Use 'start', 'stop', or 'cancel'."}
+
+    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+    return {"status": f"Robot mic {req.action}", "mic_status": _robot_mic_status}
 
 @app.get("/robot/mic-status")
 async def get_mic_status():
@@ -173,7 +209,32 @@ async def mic_done():
     """App gọi sau khi đã upload xong audio, báo hiệu hoàn tất chu kỳ."""
     global _robot_mic_status
     _robot_mic_status = "idle"
+    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
     return {"status": "Mic cycle complete", "mic_status": _robot_mic_status}
+
+
+class LogRequest(BaseModel):
+    message: str
+
+
+@app.post("/robot/log")
+async def receive_robot_log(req: LogRequest):
+    await ws_manager.broadcast({"type": "log", "message": req.message})
+    return {"status": "Log broadcasted"}
+
+
+@app.websocket("/ws/operator")
+async def websocket_operator(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        await websocket.send_json({"type": "mic_status", "status": _robot_mic_status})
+        if _latest_transcript:
+            await websocket.send_json({"type": "transcript", "data": _latest_transcript})
+
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
 
 # =========================
 # Orchestration Endpoints
@@ -183,6 +244,7 @@ async def mic_done():
 async def process_audio(file: UploadFile = File(...)):
     global _latest_transcript, _latest_robot_command
     try:
+        presets = load_qa_presets()
         transcript = process_stt_request(
             file,
             model=GLOBAL_AUDIO_CONFIG["stt_model"],
@@ -191,20 +253,29 @@ async def process_audio(file: UploadFile = File(...)):
         if transcript.strip() == "":
             _latest_transcript = {
                 "transcript": "Không nhận được voice. Vui lòng nói lại.",
-                "candidates": []
+                "candidates": presets
             }
             _latest_robot_command = {
                 "text": "Không nhận được voice. Vui lòng nói lại.",
                 "emotion": "no_voice",
                 "timestamp": time.time_ns()
             }
+            await ws_manager.broadcast({"type": "transcript", "data": _latest_transcript})
             return _latest_transcript
-        candidates = semantic_router.get_top_matches(transcript)
         _latest_transcript = {
             "transcript": transcript,
-            "candidates": candidates
+            "candidates": presets
         }
+        await ws_manager.broadcast({"type": "transcript", "data": _latest_transcript})
         return _latest_transcript
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/qa-presets")
+async def get_qa_presets():
+    try:
+        return {"presets": load_qa_presets()}
     except Exception as e:
         return {"error": str(e)}
         
