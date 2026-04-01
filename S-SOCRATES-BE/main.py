@@ -12,6 +12,7 @@ from services.chat_orchestrator import process_chat_message
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
 from services.semantic_router import semantic_router
 from services.llm_service import ask_socrates, switch_gemini_model, AVAILABLE_GEMINI_MODELS
+from services.memory_service import memory_service
 
 # =========================
 # FastAPI Configuration
@@ -51,7 +52,8 @@ class ConnectionManager:
             except Exception:
                 pass
 
-ws_manager = ConnectionManager()
+ws_manager = ConnectionManager()       # Operator Web UI
+robot_ws_manager = ConnectionManager()  # Robot Flutter App
 
 load_dotenv()
 
@@ -189,8 +191,10 @@ async def mic_control(req: MicControlRequest):
     else:
         return {"error": "Invalid action. Use 'start', 'stop', or 'cancel'."}
         
-    # Phát qua WebSocket để UI cập nhật ngay lập tức
-    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+    # Phát qua WebSocket để Operator UI + Robot đều cập nhật ngay lập tức
+    mic_msg = {"type": "mic_status", "status": _robot_mic_status}
+    await ws_manager.broadcast(mic_msg)
+    await robot_ws_manager.broadcast(mic_msg)
     return {"status": f"Robot mic {req.action}", "mic_status": _robot_mic_status}
 
 @app.get("/robot/mic-status")
@@ -203,7 +207,9 @@ async def mic_done():
     """App gọi sau khi đã upload xong audio, báo hiệu hoàn tất chu kỳ."""
     global _robot_mic_status
     _robot_mic_status = "idle"
-    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+    idle_msg = {"type": "mic_status", "status": _robot_mic_status}
+    await ws_manager.broadcast(idle_msg)
+    await robot_ws_manager.broadcast(idle_msg)
     return {"status": "Mic cycle complete", "mic_status": _robot_mic_status}
 
 class LogRequest(BaseModel):
@@ -228,6 +234,51 @@ async def websocket_operator(websocket: WebSocket):
             data = await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket)
+
+
+# =========================
+# WebSocket — Robot Flutter App
+# =========================
+@app.websocket("/ws/robot")
+async def websocket_robot(websocket: WebSocket):
+    await robot_ws_manager.connect(websocket)
+    print("🤖 Robot WebSocket connected!")
+    try:
+        # Đồng bộ ngay trạng thái hiện tại khi Robot vừa kết nối
+        await websocket.send_json({"type": "mic_status", "status": _robot_mic_status})
+        if _latest_robot_command:
+            await websocket.send_json({"type": "command", **_latest_robot_command})
+
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type", "")
+
+            if msg_type == "mic_done":
+                # Robot báo đã upload xong audio
+                global _robot_mic_status
+                _robot_mic_status = "idle"
+                idle_msg = {"type": "mic_status", "status": "idle"}
+                await ws_manager.broadcast(idle_msg)
+                await robot_ws_manager.broadcast(idle_msg)
+
+            elif msg_type == "manual_mic":
+                # Robot báo người dùng chạm Orb thủ công bật/tắt mic
+                action = data.get("action", "")
+                if action == "start":
+                    _robot_mic_status = "listening"
+                elif action == "stop":
+                    _robot_mic_status = "processing"
+                mic_msg = {"type": "mic_status", "status": _robot_mic_status}
+                await ws_manager.broadcast(mic_msg)
+
+            elif msg_type == "log":
+                # Robot gửi log — chuyển tiếp cho Operator UI
+                log_msg = {"type": "log", "message": data.get("message", "")}
+                await ws_manager.broadcast(log_msg)
+
+    except WebSocketDisconnect:
+        robot_ws_manager.disconnect(websocket)
+        print("🤖 Robot WebSocket disconnected.")
 
 # =========================
 # Orchestration Endpoints
@@ -278,19 +329,25 @@ async def operator_decision(req: DecisionRequest):
     text = ""
     emotion = "neutral"
 
+    # Lấy lịch sử hội thoại để AI nhớ ngữ cảnh
+    history_context = memory_service.get_context_string()
+
     if req.mode == "preset":
         text = req.selected_answer
         emotion = "speaking"
     elif req.mode == "ai":
         # Using Ollama (Local LLM) through ask_socrates
-        text = ask_socrates(req.transcript, model_choice="ollama")
+        text = ask_socrates(req.transcript, history_context, model_choice="ollama")
         emotion = "challenge"
     elif req.mode == "gemini":
         # Using Gemini (Cloud LLM) through ask_socrates
-        text = ask_socrates(req.transcript, model_choice="gemini")
+        text = ask_socrates(req.transcript, history_context, model_choice="gemini")
         emotion = "challenge"
     else:
         return {"error": "Invalid mode"}
+
+    # Lưu lại cuộc hội thoại vào memory
+    memory_service.save(req.transcript, text)
 
     # Heuristic for emotion
     if "phản biện" in text.lower() or "nhưng" in text.lower() or "thế nào" in text.lower():
@@ -313,6 +370,8 @@ async def send_to_robot(req: RobotCommand):
         "emotion": req.emotion,
         "timestamp": time.time_ns()
     }
+    # Đẩy lệnh trực tiếp xuống Robot qua WebSocket — 0ms delay
+    await robot_ws_manager.broadcast({"type": "command", **_latest_robot_command})
     return {"status": "Command sent to robot queue", "command": _latest_robot_command}
 
 @app.get("/robot-command")

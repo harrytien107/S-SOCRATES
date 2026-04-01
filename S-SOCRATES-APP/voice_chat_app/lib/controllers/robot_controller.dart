@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:voice_chat_app/services/api_config.dart';
 import 'package:voice_chat_app/services/agent_api.dart';
 import 'package:voice_chat_app/services/tts_service.dart';
@@ -15,46 +16,186 @@ class RobotController {
   final ValueNotifier<bool> isBackendReachable = ValueNotifier(true);
   final ValueNotifier<Map<String, dynamic>?> latestTranscriptResult = ValueNotifier(null);
   
-  Timer? _pollingTimer;
-  Timer? _micPollTimer;
+  // ── WebSocket ──────────────────────────────────────────────────
+  WebSocketChannel? _channel;
+  Timer? _reconnectTimer;
+  int _reconnectFailCount = 0;
+  bool _wsConnected = false;
   String? _lastCommandSignature;
   bool _isProcessing = false;
   bool _isMicBusy = false;
-  int _pollFailureCount = 0;
   String _lastMicStatus = 'idle';
+
+  // ── Fallback Polling (backup khi WS thất bại) ────────────────
+  Timer? _pollingTimer;
+  Timer? _micPollTimer;
+  bool _usingFallbackPolling = false;
+  int _pollFailureCount = 0;
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AgentAPI _agentAPI = AgentAPI();
 
-  void startPolling() {
-    _pollingTimer?.cancel();
-    _micPollTimer?.cancel();
-    // Timer 1: Poll robot-command (TTS, emotion...) — 500ms
-    _pollingTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _pollCommands());
-    // Timer 2: Poll Mic từ Đạo diễn — 300ms, chạy SONG SONG, ĐỘC LẬP
-    _micPollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) => _pollMicStatus());
-    debugPrint('Robot Polling Started (command 500ms + mic 300ms)');
+  // =============================================================
+  //  KHỞI ĐỘNG — Kết nối WebSocket (Ưu tiên #1)
+  // =============================================================
+  void connectWebSocket() {
+    _reconnectTimer?.cancel();
+    _connectWs();
   }
 
-  void stopPolling() {
-    _pollingTimer?.cancel();
-    _micPollTimer?.cancel();
-    TtsService.stop();
-    debugPrint('Robot Polling Stopped');
+  void _connectWs() {
+    try {
+      // Chuyển http://IP:8000 → ws://IP:8000/ws/robot
+      final baseUrl = ApiConfig.baseUrl;
+      final wsUrl = baseUrl
+          .replaceFirst('https://', 'wss://')
+          .replaceFirst('http://', 'ws://');
+      final uri = Uri.parse('$wsUrl/ws/robot');
+
+      debugPrint('🔌 Connecting WebSocket: $uri');
+      _channel = WebSocketChannel.connect(uri);
+
+      _channel!.stream.listen(
+        _onMessage,
+        onDone: _onDisconnected,
+        onError: (error) {
+          debugPrint('🔴 WebSocket Error: $error');
+          _onDisconnected();
+        },
+      );
+
+      // Nếu stream không throw ngay → coi như kết nối thành công
+      // (FastAPI sẽ gửi mic_status ngay khi accept)
+      _wsConnected = true;
+      _reconnectFailCount = 0;
+      _usingFallbackPolling = false;
+      _stopFallbackPolling();
+
+      // Reset trạng thái kết nối
+      if (!isBackendReachable.value) {
+        isBackendReachable.value = true;
+        if (state.value == RobotUiState.error) {
+          state.value = RobotUiState.idle;
+        }
+      }
+
+      debugPrint('🟢 WebSocket Connected!');
+    } catch (e) {
+      debugPrint('❌ WebSocket connect failed: $e');
+      _onDisconnected();
+    }
   }
 
-  void clearConnectionWarning() {
-    if (!isBackendReachable.value) {
-      isBackendReachable.value = true;
+  void _onDisconnected() {
+    _wsConnected = false;
+    _channel = null;
+    _reconnectFailCount++;
+    debugPrint('🔴 WebSocket disconnected (fail #$_reconnectFailCount)');
+
+    // Sau 5 lần thất bại (~15s) → báo mất kết nối
+    if (_reconnectFailCount >= 5 && isBackendReachable.value) {
+      isBackendReachable.value = false;
+      state.value = RobotUiState.error;
     }
-    if (state.value == RobotUiState.error) {
-      state.value = RobotUiState.idle;
+
+    // Sau 10 lần thất bại (~30s) → chuyển sang fallback polling
+    if (_reconnectFailCount >= 10 && !_usingFallbackPolling) {
+      debugPrint('⚠️ WebSocket thất bại quá nhiều → chuyển sang Fallback Polling');
+      _startFallbackPolling();
     }
-    _pollFailureCount = 0;
+
+    // Luôn thử reconnect mỗi 3 giây
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(const Duration(seconds: 3), () {
+      if (!_wsConnected) {
+        _connectWs();
+      }
+    });
+  }
+
+  // =============================================================
+  //  XỬ LÝ TIN NHẮN TỪ SERVER
+  // =============================================================
+  void _onMessage(dynamic raw) {
+    try {
+      final data = raw is String ? jsonDecode(raw) : raw;
+      if (data is! Map<String, dynamic>) return;
+
+      final type = data['type'] as String? ?? '';
+
+      if (type == 'mic_status') {
+        _handleMicStatus(data['status'] as String? ?? 'idle');
+      } else if (type == 'command') {
+        _handleCommand(data);
+      }
+
+      // Nếu nhận được tin nhắn → kết nối ổn
+      if (!isBackendReachable.value) {
+        isBackendReachable.value = true;
+        if (state.value == RobotUiState.error) {
+          state.value = RobotUiState.idle;
+        }
+      }
+      _reconnectFailCount = 0;
+    } catch (e) {
+      debugPrint('⚠️ _onMessage parse error: $e');
+    }
+  }
+
+  void _handleMicStatus(String status) {
+    if (status == _lastMicStatus) return;
+    if (_isMicBusy) return;
+
+    final prev = _lastMicStatus;
+    _lastMicStatus = status;
+    debugPrint('🎛️ WS Mic status: $prev → $status');
+
+    _isMicBusy = true;
+
+    _processMicChange(prev, status).whenComplete(() {
+      _isMicBusy = false;
+    });
+  }
+
+  Future<void> _processMicChange(String prev, String status) async {
+    if (status == 'listening' && prev != 'listening') {
+      state.value = RobotUiState.listening;
+      await startRecordingAudio();
+    } else if (status == 'processing' && prev == 'listening') {
+      await stopRecordingAndProcess();
+      _sendToServer({'type': 'mic_done'});
+    } else if (status == 'canceled' && prev == 'listening') {
+      await cancelRecording();
+      _sendToServer({'type': 'mic_done'});
+    }
+  }
+
+  void _handleCommand(Map<String, dynamic> data) {
+    final text = ((data['text'] ?? '') as String).trim();
+    final emotion = ((data['emotion'] ?? 'neutral') as String).trim().toLowerCase();
+    final signature = '${data['timestamp'] ?? ''}|$emotion|$text';
+
+    if (signature != _lastCommandSignature) {
+      _lastCommandSignature = signature;
+      _processCommand(text, emotion);
+    }
+  }
+
+  // =============================================================
+  //  GỬI TIN NHẮN LÊN SERVER QUA WEBSOCKET
+  // =============================================================
+  void _sendToServer(Map<String, dynamic> data) {
+    if (_wsConnected && _channel != null) {
+      try {
+        _channel!.sink.add(jsonEncode(data));
+      } catch (e) {
+        debugPrint('⚠️ _sendToServer error: $e');
+      }
+    }
   }
 
   // ============================================
-  // Audio Recording
+  // Audio Recording (GIỮ NGUYÊN 100%)
   // ============================================
   Future<void> startRecordingAudio() async {
     _remoteLog('startRecordingAudio() CALLED');
@@ -90,16 +231,20 @@ class RobotController {
     }
   }
 
-  // Remote debug log — gửi HTTP lên backend để ta thấy trên server console
+  // Remote debug log — gửi qua WebSocket (ưu tiên) hoặc HTTP (fallback)
   void _remoteLog(String msg) {
     debugPrint('📱 $msg');
-    try {
-      http.post(
-        Uri.parse('${ApiConfig.baseUrl}/robot/log'),
-        headers: {'Content-Type': 'application/json'},
-        body: '{"message": "${msg.replaceAll('"', '\\"')}"}',
-      );
-    } catch (_) {}
+    if (_wsConnected) {
+      _sendToServer({'type': 'log', 'message': msg});
+    } else {
+      try {
+        http.post(
+          Uri.parse('${ApiConfig.baseUrl}/robot/log'),
+          headers: {'Content-Type': 'application/json'},
+          body: '{"message": "${msg.replaceAll('"', '\\"')}"}',
+        );
+      } catch (_) {}
+    }
   }
 
   Future<void> cancelRecording() async {
@@ -155,9 +300,13 @@ class RobotController {
   // Manual Tap — Đồng bộ ngược lên Backend
   // ============================================
   Future<void> manualStartRecording() async {
-    // 1. Báo Backend: "Tôi tự bật mic"
-    await _agentAPI.sendMicControl('start');
-    // 2. Cập nhật local để poll không trigger lần nữa
+    // 1. Báo Backend qua WebSocket (hoặc HTTP fallback)
+    if (_wsConnected) {
+      _sendToServer({'type': 'manual_mic', 'action': 'start'});
+    } else {
+      await _agentAPI.sendMicControl('start');
+    }
+    // 2. Cập nhật local
     _lastMicStatus = 'listening';
     // 3. Bật mic thật
     state.value = RobotUiState.listening;
@@ -165,20 +314,42 @@ class RobotController {
   }
 
   Future<void> manualStopRecording() async {
-    // 1. Báo Backend: "Tôi tự tắt mic và gửi audio"
-    await _agentAPI.sendMicControl('stop');
-    // 2. Cập nhật local để poll không trigger lần nữa
+    // 1. Báo Backend qua WebSocket (hoặc HTTP fallback)
+    if (_wsConnected) {
+      _sendToServer({'type': 'manual_mic', 'action': 'stop'});
+    } else {
+      await _agentAPI.sendMicControl('stop');
+    }
+    // 2. Cập nhật local
     _lastMicStatus = 'processing';
     // 3. Tắt mic + upload
     await stopRecordingAndProcess();
-    // 4. Báo hoàn tất
-    await _agentAPI.notifyMicDone();
+    // 4. Báo hoàn tất qua WebSocket
+    _sendToServer({'type': 'mic_done'});
   }
 
-  // ============================================
-  // MIC POLL — Chạy hoàn toàn ĐỘC LẬP
-  // Không bị _isProcessing hay TTS chặn.
-  // ============================================
+  // =============================================================
+  //  FALLBACK POLLING (Chỉ bật khi WebSocket thất bại liên tục)
+  // =============================================================
+  void _startFallbackPolling() {
+    if (_usingFallbackPolling) return;
+    _usingFallbackPolling = true;
+    debugPrint('🔄 Fallback Polling STARTED (command 500ms + mic 300ms)');
+
+    _pollingTimer?.cancel();
+    _micPollTimer?.cancel();
+    _pollingTimer = Timer.periodic(const Duration(milliseconds: 500), (_) => _pollCommands());
+    _micPollTimer = Timer.periodic(const Duration(milliseconds: 300), (_) => _pollMicStatus());
+  }
+
+  void _stopFallbackPolling() {
+    if (!_usingFallbackPolling) return;
+    _usingFallbackPolling = false;
+    _pollingTimer?.cancel();
+    _micPollTimer?.cancel();
+    debugPrint('✅ Fallback Polling STOPPED (WebSocket restored)');
+  }
+
   Future<void> _pollMicStatus() async {
     if (_isMicBusy) return;
     
@@ -188,7 +359,7 @@ class RobotController {
 
       final prev = _lastMicStatus;
       _lastMicStatus = status;
-      debugPrint('🎛️ Mic status: $prev → $status');
+      debugPrint('🎛️ Poll Mic status: $prev → $status');
 
       _isMicBusy = true;
 
@@ -209,9 +380,6 @@ class RobotController {
     }
   }
 
-  // ============================================
-  // COMMAND POLL — Poll robot-command (TTS, emotion)
-  // ============================================
   Future<void> _pollCommands() async {
     if (_isProcessing) return;
 
@@ -251,18 +419,13 @@ class RobotController {
     }
 
     if (command != null) {
-      debugPrint('Received new command');
-      final text = ((command['text'] ?? '') as String).trim();
-      final emotion = ((command['emotion'] ?? 'neutral') as String).trim().toLowerCase();
-      final signature = '${command['timestamp'] ?? ''}|$emotion|$text';
-
-      if (signature != _lastCommandSignature) {
-        _lastCommandSignature = signature;
-        _processCommand(text, emotion);
-      }
+      _handleCommand(command);
     }
   }
 
+  // =============================================================
+  //  XỬ LÝ COMMAND (DÙNG CHUNG CHO CẢ WS VÀ POLLING)
+  // =============================================================
   Future<void> _processCommand(String text, String emotion) async {
     _isProcessing = true;
     debugPrint('Process Command: $text ($emotion)');
@@ -306,7 +469,7 @@ class RobotController {
       if (mappedState == RobotUiState.listening) {
         debugPrint('🎙️ Command: LISTENING → set state (screen sẽ bật mic)');
         state.value = RobotUiState.listening;
-        _isProcessing = false;  // Cho phép poll tiếp để nhận lệnh uploading
+        _isProcessing = false;  // Cho phép xử lý tiếp để nhận lệnh uploading
         return;
       }
 
@@ -314,7 +477,7 @@ class RobotController {
       if (mappedState == RobotUiState.uploading) {
         debugPrint('📤 Command: UPLOADING → set state (screen sẽ tắt mic + gửi)');
         state.value = RobotUiState.uploading;
-        _isProcessing = false;  // PHẢI false để poll tiếp hoạt động
+        _isProcessing = false;  // PHẢI false để nhận lệnh tiếp
         return;
       }
 
@@ -356,12 +519,28 @@ class RobotController {
     }
   }
 
+  void clearConnectionWarning() {
+    if (!isBackendReachable.value) {
+      isBackendReachable.value = true;
+    }
+    if (state.value == RobotUiState.error) {
+      state.value = RobotUiState.idle;
+    }
+    _pollFailureCount = 0;
+    _reconnectFailCount = 0;
+  }
+
   void dispose() {
-    stopPolling();
+    _reconnectTimer?.cancel();
+    _pollingTimer?.cancel();
+    _micPollTimer?.cancel();
+    _channel?.sink.close();
+    TtsService.stop();
     _audioRecorder.dispose();
     state.dispose();
     currentMessage.dispose();
     isBackendReachable.dispose();
     latestTranscriptResult.dispose();
+    debugPrint('🛑 RobotController disposed');
   }
 }

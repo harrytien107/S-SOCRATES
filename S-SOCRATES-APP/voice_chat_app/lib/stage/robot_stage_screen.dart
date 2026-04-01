@@ -71,7 +71,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
       }
     });
 
-    _robotController.startPolling();
+    _robotController.connectWebSocket();
   }
 
   // ── Tap orb ───────────────────────────────────────────────────
