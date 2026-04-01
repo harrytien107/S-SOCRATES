@@ -113,6 +113,34 @@ function connectWebSocket() {
                 addLog("⚡ Received real-time voice input from Robot.");
             }
 
+            if (msg.type === 'stt_interim') {
+                // Deepgram: đang nói — cập nhật dòng nhảy chữ
+                const interim = document.getElementById('transcript-interim');
+                if (interim) interim.textContent = '░░ ' + msg.text + '...';
+            }
+
+            if (msg.type === 'stt_final') {
+                // Deepgram: chốt 1 câu — thêm vào transcript log
+                const box = document.getElementById('transcript-box');
+                const speakerLabel = msg.speaker >= 0 ? `[Speaker ${msg.speaker}]` : '';
+                if (box.textContent === 'Chưa có tín hiệu âm thanh...') box.innerHTML = '';
+                box.innerHTML += `<p style="margin: 4px 0;"><span style="color: var(--cyan); font-weight: 600;">${speakerLabel}</span> ${msg.text}</p>`;
+                box.scrollTop = box.scrollHeight;
+                // Xóa dòng interim
+                const interim = document.getElementById('transcript-interim');
+                if (interim) interim.textContent = '';
+                addLog(`🎙️ [Final] ${speakerLabel} ${msg.text.substring(0, 50)}...`);
+            }
+
+            if (msg.type === 'stt_error') {
+                addLog(`❌ STT Error: ${msg.error}`);
+            }
+
+            if (msg.type === 'stream_progress') {
+                // TTS streaming: AI đang nói từng câu
+                addLog(`🗣️ Chunk #${msg.index}: ${msg.text.substring(0, 40)}...`);
+            }
+
             if (msg.type === 'log') {
                 addLog(`📱 ROBOT: ${msg.message}`);
             }
@@ -490,26 +518,248 @@ async function sendToRobot() {
     statusMessage("Sending to Robot...", "normal");
 
     try {
-        const response = await fetch(`${base}/send-to-robot`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                text: text,
-                emotion: selectedEmotion
-            })
-        });
-        const result = await response.json();
+        // Chỉ dùng streaming TTS cho speaking/challenge (cần phát giọng)
+        // Các emotion khác (error, no_voice, neutral...) chỉ gửi command, KHÔNG đọc
+        const needsTTS = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
         
-        if (result.status) {
+        let result;
+        if (needsTTS && text) {
+            const response = await fetch(`${base}/operator-decision/stream-tts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text, emotion: selectedEmotion })
+            });
+            result = await response.json();
+            if (result.error) throw new Error(result.error);
+            addLog(`✓ Sent to Robot [${selectedEmotion.toUpperCase()}] — ${result.chunks} chunks`);
+            statusMessage(`Sent Successfully! (${result.chunks} chunks)`, "success");
+        } else {
+            // Emotion-only command (no TTS)
+            const response = await fetch(`${base}/send-to-robot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: text || '', emotion: selectedEmotion })
+            });
+            result = await response.json();
+            if (result.error) throw new Error(result.error);
             addLog(`✓ Sent to Robot [${selectedEmotion.toUpperCase()}]`);
             statusMessage("Sent Successfully!", "success");
-            setTimeout(() => updateSendButton(), 3000);
-        } else {
-            throw new Error("Queue failed");
         }
+        setTimeout(() => updateSendButton(), 3000);
     } catch (err) {
-        addLog(`✕ Send Failed.`);
+        addLog(`✕ Send Failed: ${err.message}`);
         statusMessage("Send Failed", "error");
+        btn.disabled = false;
+    }
+}
+
+// =========================
+// LIVE AUDIO STREAMING
+// =========================
+let audioWs = null;
+let audioContext = null;
+let audioStream = null;
+let isLiveStreaming = false;
+
+// Audio source toggle
+document.getElementById('audio-source')?.addEventListener('change', function() {
+    const deviceSelector = document.getElementById('device-selector');
+    if (this.value === 'laptop') {
+        deviceSelector.style.display = 'block';
+        enumerateAudioDevices();
+    } else {
+        deviceSelector.style.display = 'none';
+    }
+});
+
+async function enumerateAudioDevices() {
+    const select = document.getElementById('audio-device-select');
+    try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            select.innerHTML = '<option disabled>Trình duyệt chặn Mic vì không dùng mã hoá HTTPS hoặc Localhost</option>';
+            throw new Error("Trình duyệt chặn quyền truy cập Mic (yêu cầu HTTPS hoặc truy cập qua localhost)");
+        }
+        await navigator.mediaDevices.getUserMedia({ audio: true });
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const audioInputs = devices.filter(d => d.kind === 'audioinput');
+        
+        select.innerHTML = '';
+        if (audioInputs.length === 0) {
+            select.innerHTML = '<option disabled>Không tìm thấy Microphone</option>';
+        } else {
+            audioInputs.forEach(device => {
+                const opt = document.createElement('option');
+                opt.value = device.deviceId;
+                opt.textContent = device.label || `Microphone ${select.children.length + 1}`;
+                select.appendChild(opt);
+            });
+        }
+        addLog(`🎛️ Found ${audioInputs.length} audio devices.`);
+    } catch (err) {
+        addLog(`❌ Lỗi truy cập Mic: ${err.message}`);
+        // Giữ nguyên dòng hiển thị lỗi trên dropdown
+        if (select.innerHTML.includes('Loading')) {
+            select.innerHTML = '<option disabled>Lỗi: Không thể truy cập Microphone</option>';
+        }
+    }
+}
+
+function float32ToInt16(float32Array) {
+    const int16 = new Int16Array(float32Array.length);
+    for (let i = 0; i < float32Array.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32Array[i]));
+        int16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    }
+    return int16;
+}
+
+async function toggleLiveTranscribe() {
+    if (isLiveStreaming) {
+        stopLiveTranscribe();
+    } else {
+        await startLiveTranscribe();
+    }
+}
+
+async function startLiveTranscribe() {
+    const btn = document.getElementById('btn-live-transcribe');
+    const source = document.getElementById('audio-source').value;
+
+    try {
+        // Lấy audio stream
+        const constraints = { audio: { sampleRate: 16000, channelCount: 1 } };
+        if (source === 'laptop') {
+            const deviceId = document.getElementById('audio-device-select').value;
+            if (deviceId) constraints.audio.deviceId = { exact: deviceId };
+        }
+
+        audioStream = await navigator.mediaDevices.getUserMedia(constraints);
+
+        // Mở WebSocket tới backend
+        const baseWs = window.location.origin.replace('http:', 'ws:').replace('https:', 'wss:');
+        audioWs = new WebSocket(`${baseWs}/ws/audio-stream`);
+
+        audioWs.onopen = () => {
+            addLog('🎧 Live streaming connected!');
+
+            // AudioContext → cắt thành chunks 100ms → gửi qua WS
+            audioContext = new AudioContext({ sampleRate: 16000 });
+            const sourceNode = audioContext.createMediaStreamSource(audioStream);
+            // 1600 samples = 100ms @ 16kHz
+            const processor = audioContext.createScriptProcessor(1600, 1, 1);
+
+            processor.onaudioprocess = (e) => {
+                if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+                    const pcm = e.inputBuffer.getChannelData(0);
+                    const int16 = float32ToInt16(pcm);
+                    audioWs.send(int16.buffer);
+                }
+            };
+
+            sourceNode.connect(processor);
+            processor.connect(audioContext.destination);
+        };
+
+        audioWs.onerror = (err) => {
+            addLog('❌ Audio WS error');
+            stopLiveTranscribe();
+        };
+
+        audioWs.onclose = () => {
+            addLog('🔌 Audio WS closed');
+            isLiveStreaming = false;
+            btn.textContent = '🎧 LIVE';
+            btn.style.background = '';
+        };
+
+        isLiveStreaming = true;
+        btn.textContent = '⏹ STOP';
+        btn.style.background = 'rgba(239, 68, 68, 0.3)';
+        document.getElementById('transcript-box').innerHTML = '';
+        addLog(`🎧 Live transcribe started (source: ${source})`);
+
+    } catch (err) {
+        addLog(`❌ Cannot start live streaming: ${err.message}`);
+    }
+}
+
+function stopLiveTranscribe() {
+    const btn = document.getElementById('btn-live-transcribe');
+
+    if (audioWs && audioWs.readyState === WebSocket.OPEN) {
+        audioWs.send(JSON.stringify({ action: 'stop' }));
+        audioWs.close();
+    }
+    audioWs = null;
+
+    if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+    }
+
+    if (audioStream) {
+        audioStream.getTracks().forEach(t => t.stop());
+        audioStream = null;
+    }
+
+    isLiveStreaming = false;
+    btn.textContent = '🎧 LIVE';
+    btn.style.background = '';
+    document.getElementById('transcript-interim').textContent = '';
+    addLog('⏹ Live transcribe stopped.');
+}
+
+// =========================
+// GEMINI STREAMING (AI TRỰC TIẾP)
+// =========================
+async function useGeminiStream() {
+    const base = window.location.origin;
+
+    // Lấy transcript: ưu tiên full_transcript từ streaming, fallback về currentData
+    let transcript = '';
+    try {
+        const streamRes = await fetch(`${base}/streaming/transcript`);
+        const streamData = await streamRes.json();
+        if (streamData.full_text && streamData.full_text.trim()) {
+            transcript = streamData.full_text;
+        }
+    } catch (e) {}
+
+    if (!transcript && currentData && currentData.transcript) {
+        transcript = currentData.transcript;
+    }
+
+    if (!transcript) {
+        addLog('⚠️ Chưa có transcript để AI phản biện.');
+        return;
+    }
+
+    const btn = document.querySelector('[onclick="useGeminiStream()"]');
+    const originalText = btn.innerHTML;
+    btn.innerHTML = '<span>⏳ STREAMING...</span>';
+    btn.disabled = true;
+    statusMessage('⚡ AI đang trả lời trực tiếp...');
+
+    try {
+        const response = await fetch(`${base}/operator-decision/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ transcript: transcript, mode: 'gemini' })
+        });
+        const result = await response.json();
+        if (result.error) throw new Error(result.error);
+
+        document.getElementById('final-preview').innerText = result.text;
+        syncExpandedPreview();
+        setEmotion('challenge', null, false);
+        updateSendButton();
+        addLog(`⚡ AI Trực Tiếp hoàn tất: ${result.chunks} chunks`);
+        statusMessage(`AI Stream done! (${result.chunks} chunks)`, 'success');
+    } catch (err) {
+        addLog(`⚡ AI Stream Failed: ${err.message}`);
+        statusMessage('AI Stream Failed', 'error');
+    } finally {
+        btn.innerHTML = originalText;
         btn.disabled = false;
     }
 }

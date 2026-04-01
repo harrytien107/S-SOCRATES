@@ -28,9 +28,9 @@ extension RobotUiStateX on RobotUiState {
       case RobotUiState.challenge:
         return 'Thách thức!';
       case RobotUiState.noVoice:
-        return '';
+        return 'Không nhận được giọng nói';
       case RobotUiState.error:
-        return '';
+        return 'Mất kết nối Server';
     }
   }
 
@@ -45,9 +45,9 @@ extension RobotUiStateX on RobotUiState {
       case RobotUiState.thinking:
         return const Color(0xFF00FFC8);
       case RobotUiState.speaking:
-        return const Color(0xFF00EEFF);
+        return const Color(0xFF00EEFF);  // Cyan sáng — giọng bình thường
       case RobotUiState.challenge:
-        return const Color(0xFFFF9900);
+        return const Color(0xFFFF4400);  // Đỏ cam — phản biện mạnh
       case RobotUiState.noVoice:
         return const Color(0xFFFFFF00);
       case RobotUiState.error:
@@ -73,7 +73,7 @@ extension RobotUiStateX on RobotUiState {
       case RobotUiState.speaking:
         return 0.40;
       case RobotUiState.challenge:
-        return 1.10;
+        return 1.40;  // Nhanh hơn speaking rõ rệt
       case RobotUiState.noVoice:
         return 0.18;
       case RobotUiState.error:
@@ -95,7 +95,7 @@ extension RobotUiStateX on RobotUiState {
       case RobotUiState.speaking:
         return 0.60;
       case RobotUiState.challenge:
-        return 1.50;
+        return 2.00;  // Quay rất nhanh — phản biện
       case RobotUiState.noVoice:
         return 0.25;
       case RobotUiState.error:
@@ -125,5 +125,5 @@ extension RobotUiStateX on RobotUiState {
     }
   }
 
-  bool get showSubtitle => this == RobotUiState.speaking || this == RobotUiState.challenge;
+  bool get showSubtitle => this == RobotUiState.speaking || this == RobotUiState.challenge || this == RobotUiState.noVoice;
 }

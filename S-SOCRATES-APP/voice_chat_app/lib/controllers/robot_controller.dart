@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
@@ -11,9 +12,9 @@ import 'package:voice_chat_app/services/tts_service.dart';
 import 'package:voice_chat_app/stage/robot_ui_state.dart';
 
 class RobotController {
-  final ValueNotifier<RobotUiState> state = ValueNotifier(RobotUiState.idle);
+  final ValueNotifier<RobotUiState> state = ValueNotifier(RobotUiState.error);
   final ValueNotifier<String> currentMessage = ValueNotifier('');
-  final ValueNotifier<bool> isBackendReachable = ValueNotifier(true);
+  final ValueNotifier<bool> isBackendReachable = ValueNotifier(false);
   final ValueNotifier<Map<String, dynamic>?> latestTranscriptResult = ValueNotifier(null);
   
   // ── WebSocket ──────────────────────────────────────────────────
@@ -34,6 +35,10 @@ class RobotController {
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AgentAPI _agentAPI = AgentAPI();
+
+  // ── TTS Streaming Audio Queue ────────────────────────────────
+  final Queue<Map<String, dynamic>> _audioQueue = Queue<Map<String, dynamic>>();
+  bool _isPlayingQueue = false;
 
   // =============================================================
   //  KHỞI ĐỘNG — Kết nối WebSocket (Ưu tiên #1)
@@ -64,24 +69,12 @@ class RobotController {
         },
       );
 
-      // Nếu stream không throw ngay → coi như kết nối thành công
-      // (FastAPI sẽ gửi mic_status ngay khi accept)
-      _wsConnected = true;
-      _reconnectFailCount = 0;
-      _usingFallbackPolling = false;
-      _stopFallbackPolling();
+      // Lưu ý: Không bám vào giả định kết nối đã thành công ngay lập tức ở đây.
+      // Chúng ta sẽ chờ gói tin đầu tiên (mic_status) từ server gởi về qua _onMessage()
+      // để chính thức bật cờ _wsConnected = true và đổi UI state.
 
-      // Reset trạng thái kết nối
-      if (!isBackendReachable.value) {
-        isBackendReachable.value = true;
-        if (state.value == RobotUiState.error) {
-          state.value = RobotUiState.idle;
-        }
-      }
-
-      debugPrint('🟢 WebSocket Connected!');
     } catch (e) {
-      debugPrint('❌ WebSocket connect failed: $e');
+      debugPrint('❌ WebSocket setup failed: $e');
       _onDisconnected();
     }
   }
@@ -104,9 +97,9 @@ class RobotController {
       _startFallbackPolling();
     }
 
-    // Luôn thử reconnect mỗi 3 giây
+    // Luôn thử reconnect mỗi 1.5 giây để phản hồi nhanh hơn khi Backend bật lại
     _reconnectTimer?.cancel();
-    _reconnectTimer = Timer(const Duration(seconds: 3), () {
+    _reconnectTimer = Timer(const Duration(milliseconds: 1500), () {
       if (!_wsConnected) {
         _connectWs();
       }
@@ -117,6 +110,8 @@ class RobotController {
   //  XỬ LÝ TIN NHẮN TỪ SERVER
   // =============================================================
   void _onMessage(dynamic raw) {
+    _wsConnected = true; // Nhận được tin nhắn tức là đường truyền đang mở
+    
     try {
       final data = raw is String ? jsonDecode(raw) : raw;
       if (data is! Map<String, dynamic>) return;
@@ -127,11 +122,20 @@ class RobotController {
         _handleMicStatus(data['status'] as String? ?? 'idle');
       } else if (type == 'command') {
         _handleCommand(data);
+      } else if (type == 'tts_chunk') {
+        _handleTtsChunk(data);
+      } else if (type == 'tts_done') {
+        _handleTtsDone();
       }
 
       // Nếu nhận được tin nhắn → kết nối ổn
       if (!isBackendReachable.value) {
+        debugPrint('🟢 WebSocket Connected & Validated!');
         isBackendReachable.value = true;
+        _reconnectFailCount = 0;
+        _usingFallbackPolling = false;
+        _stopFallbackPolling();
+        
         if (state.value == RobotUiState.error) {
           state.value = RobotUiState.idle;
         }
@@ -179,6 +183,86 @@ class RobotController {
       _lastCommandSignature = signature;
       _processCommand(text, emotion);
     }
+  }
+
+  // =============================================================
+  //  TTS STREAMING — Audio Queue (phát từng câu nối đuôi nhau)
+  // =============================================================
+  void _handleTtsChunk(Map<String, dynamic> data) {
+    final audioBase64 = data['audio'] as String? ?? '';
+    final text = data['text'] as String? ?? '';
+    final emotion = data['emotion'] as String? ?? 'speaking';
+    final index = data['index'] as int? ?? 0;
+
+    if (audioBase64.isEmpty) return;
+
+    debugPrint('🔊 TTS Chunk arriving #$index: "${text.length > 30 ? text.substring(0, 30) : text}..."');
+
+    // MỚI: Thêm CẢ audio, text và emotion vào queue, không update UI ngay
+    _audioQueue.add({
+      'audio': audioBase64,
+      'text': text,
+      'emotion': emotion,
+    });
+
+    // Bắt đầu phát nếu chưa phát
+    if (!_isPlayingQueue) {
+      _processAudioQueue();
+    }
+  }
+
+  void _handleTtsDone() {
+    debugPrint('🔊 TTS Streaming done!');
+    // Nếu queue đã rỗng → chuyển về idle ngay
+    // Nếu queue còn → chờ phát xong rồi mới idle
+    if (_audioQueue.isEmpty && !_isPlayingQueue) {
+      state.value = RobotUiState.idle;
+      currentMessage.value = '';
+    }
+    // Nếu đang phát → _processAudioQueue sẽ tự chuyển idle khi xong
+  }
+
+  Future<void> _processAudioQueue() async {
+    _isPlayingQueue = true;
+    while (_audioQueue.isNotEmpty) {
+      final chunkData = _audioQueue.removeFirst();
+      final chunkBase64 = chunkData['audio'] as String;
+      final text = chunkData['text'] as String;
+      final emotion = chunkData['emotion'] as String;
+
+      try {
+        await TtsService.stop();
+        
+        // Cập nhật UI NHỮNG GÌ SẮP PHÁT (sync phụ đề với audio)
+        currentMessage.value = text;
+        state.value = (emotion == 'challenge') 
+            ? RobotUiState.challenge 
+            : RobotUiState.speaking;
+
+        final bytes = base64Decode(chunkBase64);
+        debugPrint('🔊 Playing chunk: ${bytes.length} bytes - "$text"');
+
+        // Dùng AudioPlayer phát bytes trực tiếp
+        final completer = Completer<void>();
+        TtsService.setOnComplete(() {
+          if (!completer.isCompleted) completer.complete();
+        });
+
+        // Phát audio
+        await TtsService.speakFromBytes(bytes);
+        // Chờ phát xong
+        await completer.future.timeout(
+          const Duration(seconds: 30),
+          onTimeout: () => debugPrint('⚠️ Audio chunk timeout'),
+        );
+      } catch (e) {
+        debugPrint('⚠️ Audio queue error: $e');
+      }
+    }
+    _isPlayingQueue = false;
+    // Nếu không còn chunk nào → chuyển về idle
+    state.value = RobotUiState.idle;
+    currentMessage.value = '';
   }
 
   // =============================================================

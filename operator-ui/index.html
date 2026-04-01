@@ -25,11 +25,31 @@
     <main>
         <!-- Column 1: Live Input -->
         <section class="panel">
-            <div class="panel-header">Live Guest Transcript</div>
+            <div class="panel-header">
+                Live Guest Transcript
+                <div style="display: flex; gap: 6px; align-items: center;">
+                    <select id="audio-source" style="font-size: 0.6rem; padding: 2px 6px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-family: 'JetBrains Mono';">
+                        <option value="robot">🤖 Robot Mic</option>
+                        <option value="laptop">🎛️ Laptop/Ampli</option>
+                    </select>
+                    <button class="settings-btn" id="btn-live-transcribe" onclick="toggleLiveTranscribe()" style="font-size: 0.6rem; padding: 3px 8px;">🎧 LIVE</button>
+                </div>
+            </div>
+
+            <!-- Device Selector (ẩn mặc định, hiện khi chọn Laptop) -->
+            <div id="device-selector" style="display: none; padding: 4px 12px; border-bottom: 1px solid var(--border);">
+                <select id="audio-device-select" style="width: 100%; font-size: 0.7rem; padding: 4px 8px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-family: 'JetBrains Mono';">
+                    <option>Loading devices...</option>
+                </select>
+            </div>
+
             <div class="scroll-area">
+                <!-- Transcript log (các câu đã chốt) -->
                 <div class="transcript-container" id="transcript-box">
                     Chưa có tín hiệu âm thanh...
                 </div>
+                <!-- Dòng đang nhảy chữ (interim) -->
+                <div id="transcript-interim" style="padding: 4px 12px; color: var(--cyan); font-style: italic; opacity: 0.7; min-height: 20px;"></div>
             </div>
         </section>
 
@@ -46,13 +66,20 @@
                     </div>
                 </div>
             </div>
-            <div style="padding: 1rem; border-top: 1px solid var(--border); display: flex; gap: 8px;">
-                <button class="ai-reflex-btn" onclick="useAI()" style="flex: 1;">
-                    <span>🦙 AI (OLLAMA / QWEN)</span>
-                </button>
-                <button class="ai-reflex-btn gemini-btn" onclick="useGemini()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
-                    <span>💎 AI (GEMINI)</span>
-                </button>
+            <div style="padding: 1rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px;">
+                <div style="display: flex; gap: 8px;">
+                    <button class="ai-reflex-btn" onclick="useAI()" style="flex: 1;">
+                        <span>🦙 AI (OLLAMA / QWEN)</span>
+                    </button>
+                    <button class="ai-reflex-btn gemini-btn" onclick="useGemini()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
+                        <span>💎 AI (GEMINI)</span>
+                    </button>
+                </div>
+                <div style="display: flex; gap: 8px;">
+                    <button class="ai-reflex-btn" onclick="useGeminiStream()" style="flex: 1; background: linear-gradient(135deg, #ef4444, #f97316); border: 1px solid rgba(239, 68, 68, 0.4); font-size: 0.65rem;">
+                        <span>⚡ AI TRỰC TIẾP (Stream)</span>
+                    </button>
+                </div>
             </div>
         </section>
 
@@ -170,10 +197,12 @@
                 <div class="input-group">
                     <label>💎 GEMINI MODEL</label>
                     <select id="cfg-gemini-model" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid rgba(66, 133, 244, 0.4); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                        <option value="models/gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Mới nhất)</option>
+                        <option value="models/gemini-3-flash-preview">Gemini 3.0 Flash Preview</option>
+                        <option value="models/gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        <option value="models/gemini-2.5-flash" selected>Gemini 2.5 Flash</option>
                         <option value="models/gemini-2.0-flash">Gemini 2.0 Flash (Nhanh nhất)</option>
                         <option value="models/gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Nhẹ)</option>
-                        <option value="models/gemini-1.5-flash">Gemini 1.5 Flash</option>
-                        <option value="models/gemini-1.5-pro">Gemini 1.5 Pro (Thông minh nhất)</option>
                     </select>
                 </div>
             </div>

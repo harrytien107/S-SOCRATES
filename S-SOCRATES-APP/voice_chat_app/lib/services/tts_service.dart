@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/foundation.dart';
@@ -90,6 +91,17 @@ class TtsService {
       }
     } else {
       await _audioPlayer.stop();
+    }
+  }
+
+  /// Phát audio trực tiếp từ bytes (dùng cho TTS streaming chunks)
+  static Future<void> speakFromBytes(Uint8List audioBytes) async {
+    await stop();
+    if (kIsWeb) {
+      final base64Audio = base64Encode(audioBytes);
+      _playWeb(base64Audio);
+    } else {
+      await _playNative(base64Encode(audioBytes));
     }
   }
 }

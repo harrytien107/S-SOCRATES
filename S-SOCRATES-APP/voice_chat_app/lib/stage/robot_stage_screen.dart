@@ -16,7 +16,7 @@ class RobotStageScreen extends StatefulWidget {
 
 class _RobotStageScreenState extends State<RobotStageScreen> {
   // ── State machine ──────────────────────────────────────────────
-  RobotUiState _uiState = RobotUiState.idle;
+  late RobotUiState _uiState;
 
   // ── Services ──────────────────────────────────────────────────
   final RobotController _robotController = RobotController();
@@ -31,6 +31,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
   @override
   void initState() {
     super.initState();
+    _uiState = _robotController.state.value;
     _setupController();
   }
 
@@ -168,11 +169,24 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         const SizedBox(height: 16),
-        // Orb — centered, tap anywhere cycles state in mock mode
+        // Orb — centered
         Center(
           child: AiOrbWidget(state: _uiState, size: orbSize),
         ),
 
+        const SizedBox(height: 20),
+
+        // Status Label
+        if (_uiState.label.isNotEmpty)
+          Text(
+            _uiState.label,
+            style: TextStyle(
+              color: _uiState.primaryColor,
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 1.2,
+            ),
+          ),
 
       ],
     );

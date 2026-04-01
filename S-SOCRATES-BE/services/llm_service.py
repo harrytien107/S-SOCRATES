@@ -58,7 +58,7 @@ AVAILABLE_GEMINI_MODELS = [
     "models/gemini-2.0-flash",
 ]
 
-def _init_gemini_engine(model_name: str = "models/gemini-2.0-flash"):
+def _init_gemini_engine(model_name: str = "models/gemini-2.5-flash"):
     global _gemini_engine, _current_gemini_model
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
