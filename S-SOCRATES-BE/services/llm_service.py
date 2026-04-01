@@ -51,10 +51,11 @@ _gemini_engine = None
 _current_gemini_model = None
 
 AVAILABLE_GEMINI_MODELS = [
+    "models/gemini-3.1-pro-preview",
+    "models/gemini-3-flash-preview",
+    "models/gemini-2.5-pro",
+    "models/gemini-2.5-flash",
     "models/gemini-2.0-flash",
-    "models/gemini-2.0-flash-lite",
-    "models/gemini-1.5-flash",
-    "models/gemini-1.5-pro",
 ]
 
 def _init_gemini_engine(model_name: str = "models/gemini-2.0-flash"):
