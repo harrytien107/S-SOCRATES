@@ -9,7 +9,7 @@ class ApiConfig {
   }
 
   static String get baseUrl {
-    return _baseUrl ?? const String.fromEnvironment('API_BASE_URL', defaultValue: 'http://192.168.1.239:8000');
+    return _baseUrl ?? const String.fromEnvironment('API_BASE_URL', defaultValue: 'http://172.29.87.82:8000');
   }
 
   static Future<void> setBaseUrl(String url) async {

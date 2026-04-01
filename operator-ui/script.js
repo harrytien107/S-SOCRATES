@@ -6,6 +6,7 @@ let lastLogMsg = "";
 let isMicActive = false;
 let micTimerInterval = null;
 let micStartTime = null;
+const NO_VOICE_FALLBACK_TEXT = 'Không nhận được voice. Vui lòng nói lại.';
 
 function formatTimer(ms) {
     const totalSec = Math.floor(ms / 1000);
@@ -31,11 +32,9 @@ async function _sendMicAction(action) {
 }
 
 // === QUICK SEND — Gửi emotion trực tiếp qua /send-to-robot ===
-// Không cần bấm SEND TO BOT. Dùng kênh đã hoạt động tốt.
 async function quickSendEmotion(emo, btn) {
     const base = document.getElementById('api-base').value;
 
-    // Highlight nút được chọn  
     setEmotion(emo, btn, false);
 
     try {
@@ -61,7 +60,6 @@ async function quickSendEmotion(emo, btn) {
     }
 }
 
-// === HỦY BỎ (nếu cần gọi từ logic khác) ===
 async function cancelRobotMic() {
     if (!isMicActive) return;
     if (await _sendMicAction('cancel')) {
@@ -70,57 +68,182 @@ async function cancelRobotMic() {
     }
 }
 
-// === ĐỒNG BỘ TRẠNG THÁI TỪ APP (khi App chạm Orb thủ công) ===
+async function toggleRobotMic() {
+    const action = isMicActive ? 'stop' : 'start';
+    const ok = await _sendMicAction(action);
+    if (!ok) return;
+
+    isMicActive = !isMicActive;
+    if (isMicActive) {
+        addLog(`🎙️ Đã gửi lệnh BẬT mic robot.`);
+    } else {
+        addLog(`📤 Đã gửi lệnh TẮT mic và upload audio.`);
+    }
+}
+
+// === WEBSOCKET CONNECTION ===
+let ws = null;
+let reconnectTimer = null;
 let _lastSyncedStatus = 'idle';
 
-async function syncMicStatusFromBackend() {
-    const base = document.getElementById('api-base').value;
-    try {
-        const resp = await fetch(`${base}/robot/mic-status`);
-        if (!resp.ok) return;
-        const data = await resp.json();
-        
-        // Print transparent logs from robot Flutter App
-        if (data.logs && Array.isArray(data.logs)) {
-            data.logs.forEach(log => {
-                addLog(`📱 ROBOT: ${log}`);
-            });
-        }
+function connectWebSocket() {
+    const baseInput = document.getElementById('api-base').value;
+    let wsUrl = baseInput.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/operator';
+    
+    addLog('🔌 Connecting to WebSocket...');
+    ws = new WebSocket(wsUrl);
 
-        const status = data.mic_status || 'idle';
-        if (status === _lastSyncedStatus) return;
-        _lastSyncedStatus = status;
+    ws.onopen = () => {
+        document.getElementById('online-dot').classList.add('active');
+        addLog("🟢 WebSocket Connected!");
+        if (reconnectTimer) clearInterval(reconnectTimer);
+    };
 
-        if (status === 'listening' && !isMicActive) {
-            isMicActive = true;
-            micStartTime = Date.now();
-            addLog(`🎙️ [Sync] App tự bật Mic.`);
-        } else if (status !== 'listening' && isMicActive) {
-            isMicActive = false;
-            if (status === 'processing') addLog(`📤 [Sync] App đang gửi audio lên Server.`);
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            
+            if (msg.type === 'mic_status') {
+                const status = msg.status || 'idle';
+                if (status === _lastSyncedStatus) return;
+                _lastSyncedStatus = status;
+
+                if (status === 'listening' && !isMicActive) {
+                    isMicActive = true;
+                    addLog(`🎙️ [Sync] App bật Mic.`);
+                } else if (status !== 'listening' && isMicActive) {
+                    isMicActive = false;
+                    if (status === 'processing') addLog(`📤 [Sync] App gửi audio lên Server.`);
+                }
+            }
+            
+            if (msg.type === 'transcript') {
+                currentData = msg.data;
+                displayWorkflow(msg.data);
+                addLog("⚡ Received real-time voice input from Robot.");
+            }
+
+            if (msg.type === 'log') {
+                addLog(`📱 ROBOT: ${msg.message}`);
+            }
+
+        } catch (e) {
+            console.error('WS parse error:', e);
         }
-    } catch (_) {}
+    };
+
+    ws.onclose = () => {
+        document.getElementById('online-dot').classList.remove('active');
+        addLog("🔴 WebSocket Disconnected. Reconnecting...");
+        ws = null;
+        if (!reconnectTimer) {
+            reconnectTimer = setInterval(connectWebSocket, 3000);
+        }
+    };
+
+    ws.onerror = (error) => {
+        console.error("WebSocket Error: ", error);
+        ws.close();
+    };
 }
 
 window.onload = () => {
     const saved = localStorage.getItem('socrates_api_base');
     if (saved) document.getElementById('api-base').value = saved;
-    
+
     const preview = document.getElementById('final-preview');
+    const transcriptBox = document.getElementById('transcript-box');
     preview.addEventListener('input', updateSendButton);
     preview.addEventListener('paste', (e) => e.preventDefault());
     preview.addEventListener('keydown', (e) => e.preventDefault());
+    transcriptBox.addEventListener('input', handleTranscriptInput);
     
     checkConnection();
+    loadPresetQuestions();
     updateSendButton();
     addLog("Console Ready.");
-    
-    // Poll trạng thái Mic từ Backend mỗi 2 giây để đồng bộ khi App chạm Orb
-    setInterval(syncMicStatusFromBackend, 2000);
+    connectWebSocket();
 };
 
+function handleTranscriptInput() {
+    const transcriptBox = document.getElementById('transcript-box');
+    const transcript = transcriptBox.innerText.trim();
+    setTranscriptWarning('');
+
+    if (!currentData) {
+        currentData = { transcript: '', candidates: [] };
+    }
+
+    currentData.transcript = transcript;
+
+    if (!transcript) {
+        transcriptBox.innerText = '';
+        addLog("📝 Transcript đã được xóa.");
+        return;
+    }
+
+    addLog("📝 Operator đang nhập transcript thủ công.");
+}
+
+function clearTranscriptBox() {
+    const transcriptBox = document.getElementById('transcript-box');
+    transcriptBox.innerText = '';
+    setTranscriptWarning('');
+
+    if (!currentData) {
+        currentData = { transcript: '', candidates: [] };
+    }
+    currentData.transcript = '';
+
+    addLog("🧹 Đã xóa transcript để operator nhập mới.");
+}
+
+function isNoVoiceTranscript(text) {
+    const normalized = (text || '').trim().toLowerCase();
+    return normalized === '' || normalized === NO_VOICE_FALLBACK_TEXT.toLowerCase();
+}
+
+function setTranscriptWarning(message) {
+    const warning = document.getElementById('transcript-warning');
+    if (!warning) return;
+
+    if (!message) {
+        warning.style.display = 'none';
+        warning.innerText = '';
+        return;
+    }
+
+    warning.innerText = message;
+    warning.style.display = 'block';
+}
+
+async function loadPresetQuestions() {
+    const base = document.getElementById('api-base').value;
+    const list = document.getElementById('suggestions-list');
+    const count = document.getElementById('match-count');
+
+    list.innerHTML = '<div style="text-align: center; color: var(--text-dim); margin-top: 2rem;">Đang tải danh sách câu hỏi mẫu từ API...</div>';
+    count.innerText = '...';
+
+    try {
+        const response = await fetch(`${base}/qa-presets`);
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        if (data.error) throw new Error(data.error);
+
+        renderPresetList(data.presets || []);
+        addLog("📚 Đã tải toàn bộ câu hỏi mẫu từ API /qa-presets.");
+    } catch (err) {
+        list.innerHTML = '<div style="text-align: center; color: var(--danger); margin-top: 2rem;">Không tải được danh sách câu hỏi mẫu từ API /qa-presets.</div>';
+        count.innerText = '0 presets';
+        addLog(`⚠️ Không tải được câu hỏi mẫu từ /qa-presets: ${err.message || err}`);
+    }
+}
+
 function addLog(msg) {
-    if (msg === lastLogMsg) return; // Anti-spam
+    if (msg === lastLogMsg) return;
     lastLogMsg = msg;
 
     const logContainer = document.getElementById('log-container');
@@ -187,7 +310,6 @@ async function saveSettings() {
     const base = document.getElementById('api-base').value;
     localStorage.setItem('socrates_api_base', base);
 
-    // Push audio config to backend
     try {
         await fetch(`${base}/configs`, {
             method: 'POST',
@@ -218,11 +340,9 @@ async function syncConfigs() {
         const data = await res.json();
         const cfg = data.config;
 
-        // Sync TTS Voice
         const voiceEl = document.getElementById('cfg-tts-voice');
         if (voiceEl) voiceEl.value = cfg.tts_voice;
 
-        // Sync TTS Speed
         const speedEl = document.getElementById('cfg-tts-speed');
         const speedDisplay = document.getElementById('speed-display');
         if (speedEl) {
@@ -230,59 +350,29 @@ async function syncConfigs() {
             if (speedDisplay) speedDisplay.innerText = cfg.tts_speed + 'x';
         }
 
-        // Sync STT Model
         const modelEl = document.getElementById('cfg-stt-model');
         if (modelEl) modelEl.value = cfg.stt_model;
 
-        // Sync STT Language
         const langEl = document.getElementById('cfg-stt-language');
         if (langEl) langEl.value = cfg.stt_language;
 
-        // Sync Gemini Model
         const geminiEl = document.getElementById('cfg-gemini-model');
         if (geminiEl) geminiEl.value = cfg.gemini_model;
 
         addLog("🔧 Synced audio config from backend.");
     } catch (err) {
-        // Silent fail - backend might not be up yet
     }
 }
 
 function checkConnection() {
     const base = document.getElementById('api-base').value;
     fetch(`${base}/`).then(() => {
+        addLog("HTTP API Online. Waiting for WS...");
         document.getElementById('online-dot').classList.add('active');
-        addLog("System Online.");
-        
-        // Start polling for transcripts once connected
-        if (!window.transcriptPollInterval) {
-            window.transcriptPollInterval = setInterval(pollTranscript, 2000);
-        }
     }).catch(() => {
-        document.getElementById('online-dot').classList.remove('active');
         addLog("Backend Offline.");
-        if (window.transcriptPollInterval) {
-            clearInterval(window.transcriptPollInterval);
-            window.transcriptPollInterval = null;
-        }
+        document.getElementById('online-dot').classList.remove('active');
     });
-}
-
-async function pollTranscript() {
-    const base = document.getElementById('api-base').value;
-    try {
-        const response = await fetch(`${base}/latest-transcript`);
-        if (response.ok) {
-            const data = await response.json();
-            if (data && data.transcript) {
-                currentData = data;
-                displayWorkflow(data);
-                addLog("Received new voice input from Robot.");
-            }
-        }
-    } catch (err) {
-        // Ignore silent polling errors
-    }
 }
 
 async function handleFileUpload(input) {
@@ -313,25 +403,50 @@ async function handleFileUpload(input) {
 }
 
 function displayWorkflow(data) {
-    document.getElementById('transcript-box').innerHTML = data.transcript;
-    const list = document.getElementById('suggestions-list');
-    list.innerHTML = '';
-    
+    if (!currentData) currentData = {};
+    const transcript = (data.transcript || '').trim();
+
+    if (isNoVoiceTranscript(transcript)) {
+        currentData.transcript = '';
+        setTranscriptWarning('Khong nhan duoc voice tu Deepgram. Operator co the nhap cau hoi thu cong ngay tai day.');
+        addLog('⚠️ Deepgram không trả về câu hỏi. Operator cần nhập thủ công.');
+    } else {
+        document.getElementById('transcript-box').innerText = transcript;
+        currentData.transcript = transcript;
+        setTranscriptWarning('');
+    }
+
     if (data.candidates && data.candidates.length > 0) {
-        document.getElementById('match-count').innerText = `${data.candidates.length} matches`;
-        data.candidates.forEach((c) => {
+        renderPresetList(data.candidates);
+        return;
+    }
+
+    loadPresetQuestions();
+}
+
+function renderPresetList(presets) {
+    const list = document.getElementById('suggestions-list');
+    const count = document.getElementById('match-count');
+    list.innerHTML = '';
+
+    if (presets && presets.length > 0) {
+        count.innerText = `${presets.length} presets`;
+        presets.forEach((preset, index) => {
             const card = document.createElement('div');
             card.className = 'suggestion-card';
             card.innerHTML = `
-                <span class="score-pill">${(c.score * 100).toFixed(0)}%</span>
-                <div class="a-text">${c.answer}</div>
+                <span class="score-pill">#${index + 1}</span>
+                <div class="q-text" style="font-weight: 700; margin-bottom: 8px;">${preset.question || 'Câu hỏi mẫu'}</div>
+                <div class="a-text">${preset.answer || ''}</div>
             `;
-            card.onclick = () => selectResponse(c.answer, 'preset', card);
+            card.onclick = () => selectResponse(preset.answer || '', 'preset', card);
             list.appendChild(card);
         });
-    } else {
-        list.innerHTML = '<div style="text-align: center; color: var(--text-dim); margin-top: 2rem;">No presets match.</div>';
+        return;
     }
+
+    count.innerText = '0 presets';
+    list.innerHTML = '<div style="text-align: center; color: var(--text-dim); margin-top: 2rem;">Chưa có câu hỏi mẫu.</div>';
 }
 
 function selectResponse(text, mode, element) {
@@ -341,7 +456,7 @@ function selectResponse(text, mode, element) {
     
     document.querySelectorAll('.suggestion-card').forEach(el => el.classList.remove('active'));
     if (element) element.classList.add('active');
-    addLog(`Preset selected.`);
+    addLog(`Preset selected from full preset list.`);
 }
 
 function updateSendButton() {
@@ -365,7 +480,6 @@ function updateSendButton() {
 async function useAI() {
     const base = document.getElementById('api-base').value;
     if (!currentData || !currentData.transcript) {
-        // Disabled logic via updateSendButton or similar, no alert
         return;
     }
     
@@ -389,7 +503,7 @@ async function useAI() {
         
         document.getElementById('final-preview').innerText = result.text;
         syncExpandedPreview();
-        setEmotion(result.emotion, null, false); // Don't log auto-set emotion
+        setEmotion(result.emotion, null, false);
         updateSendButton();
         addLog("AI response generated.");
     } catch (err) {
@@ -455,16 +569,13 @@ function setEmotion(emo, btn, explicit = true) {
 }
 
 async function setEmotionAndRecord(btn) {
-    // Bước 1: Đặt emotion listening cho Orb 3D
     setEmotion('listening', btn, true);
 
-    // Bước 2: Nếu đang trong trạng thái listening rồi thì TẮT (toggle)
     if (isMicActive) {
-        await toggleRobotMic(); // Đây là nút tắt
+        await toggleRobotMic();
         return;
     }
 
-    // Bước 3: Bật mic thật qua cùng đường với nút BẬT MIC ROBOT
     await toggleRobotMic();
     addLog("🎙️ Listening thật — Mic đã bật kèm Emotion listening.");
 }

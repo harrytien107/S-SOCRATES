@@ -114,7 +114,8 @@ class RobotController {
 
   Future<void> stopRecordingAndProcess() async {
     try {
-      // ✅ LUÔN CHUYỂN SANG ĐANG GỬI TRƯỚC ĐỂ UI 3D CẬP NHẬT NGAY LẬP TỨC
+      // Giữ orb ở trạng thái "đang gửi" xuyên suốt toàn bộ lúc stop mic,
+      // upload file và chờ backend/Deepgram xử lý xong.
       state.value = RobotUiState.uploading;
       
       final path = await _audioRecorder.stop();
@@ -125,25 +126,41 @@ class RobotController {
         await Future.delayed(const Duration(milliseconds: 1500));
         
         currentMessage.value = 'Chưa ghi được âm thanh. Hãy thử lại.';
-        state.value = RobotUiState.noVoice; // show a clear visual indicator that it tried
+        state.value = RobotUiState.idle;
         return;
       }
 
       debugPrint('Stopped recording, path: $path');
 
       final result = await _agentAPI.processAudio(path);
+      if (result == null) {
+        _remoteLog('processAudio returned null');
+        currentMessage.value = 'Không gửi được audio lên server.';
+        state.value = RobotUiState.error;
+        return;
+      }
+
       latestTranscriptResult.value = result;
 
       final transcript = (result?['transcript'] as String?)?.trim() ?? '';
       final normalized = transcript.toLowerCase();
+      if (transcript.isEmpty) {
+        currentMessage.value = '';
+        state.value = RobotUiState.idle;
+        return;
+      }
+
       if (transcript.isNotEmpty &&
           (normalized.contains('khong nhan duoc voice') ||
               normalized.contains('không nhận được voice'))) {
         currentMessage.value = transcript;
-        state.value = RobotUiState.noVoice;
+        state.value = RobotUiState.idle;
         return;
       }
 
+      // Khi đã có transcript hợp lệ, robot chuyển sang "thinking"
+      // để chờ operator xử lý và gửi câu trả lời tiếp theo.
+      currentMessage.value = transcript;
       state.value = RobotUiState.thinking;
     } catch (e) {
       debugPrint('Stop recording error: $e');
@@ -283,7 +300,7 @@ class RobotController {
           mappedState = RobotUiState.challenge;
           break;
         case 'no_voice':
-          mappedState = RobotUiState.noVoice;
+          mappedState = RobotUiState.idle;
           break;
         case 'error':
           mappedState = RobotUiState.error;
@@ -297,7 +314,7 @@ class RobotController {
         currentMessage.value = text.isEmpty
             ? 'Không nhận được voice. Vui lòng nói lại.'
             : text;
-        state.value = RobotUiState.noVoice;
+        state.value = RobotUiState.idle;
         _isProcessing = false;
         return;
       }
