@@ -122,9 +122,47 @@ Lưu ý:
 - `model_choice="ollama"` trong code hiện tại vẫn được giữ nguyên để tương thích API, nhưng thực tế nó sẽ route sang local backend đã chọn trong `.env`.
 - Với TurboQuant, backend không tải lại model; nó dùng trực tiếp file GGUF đã có sẵn tại `LOCAL_LLM_GGUF_PATH`.
 
+## Windows: setup TurboQuant tự động
+
+Nếu máy Windows chưa có TurboQuant, bạn có thể dùng script PowerShell để:
+
+- kiểm tra và cài dependency còn thiếu bằng `winget`
+- cài Python venv cho backend
+- clone repo TurboQuant
+- build `llama-server.exe` bằng CUDA
+- ghi lại các biến `.env` cần thiết để backend tự autostart local engine
+
+Ví dụ:
+
+```powershell
+cd S-SOCRATES-BE
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_turboquant_windows.ps1 `
+  -ModelPath "D:\models\Qwen3.5-4b-finetuned-opinion.Q4_K_M.gguf"
+```
+
+Script mặc định dùng:
+
+- repo: `spiritbuun/llama-cpp-turboquant-cuda`
+- branch: `feature/turboquant-kv-cache`
+- cache type: `turbo2`
+
+Nếu muốn test riêng `llama-server` trước khi chạy FastAPI:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start_turboquant_windows.ps1
+```
+
+Sau đó mới chạy backend:
+
+```powershell
+.\.venv\Scripts\activate
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
 ## Troubleshooting
 
 - Timeout khi polling: kiểm tra backend có đang xử lý request nặng.
 - Không có transcript: kiểm tra audio format, key STT, và log backend.
 - Không phát tiếng: kiểm tra TTS service và đường trả audio.
 - Local backend không lên: kiểm tra `LOCAL_LLM_BACKEND`, port, binary/path model GGUF, và log startup của FastAPI.
+- Build TurboQuant trên Windows lỗi: kiểm tra CUDA Toolkit, Visual Studio Build Tools C++, và thử chạy lại `setup_turboquant_windows.ps1 -ForceReconfigure`.
