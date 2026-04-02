@@ -3,6 +3,7 @@ import json
 import asyncio
 import httpx
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 import os
 from fastapi.middleware.cors import CORSMiddleware
@@ -11,7 +12,15 @@ from dotenv import load_dotenv
 
 from services.stt_service import process_stt_request
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
-from services.llm_service import ask_socrates, switch_gemini_model, AVAILABLE_GEMINI_MODELS
+from services.llm_service import (
+    ask_socrates,
+    switch_gemini_model,
+    AVAILABLE_GEMINI_MODELS,
+    get_local_backend_status,
+    initialize_local_backend,
+    shutdown_local_backend,
+)
+from utils.logger import log
 
 # =========================
 # FastAPI Configuration
@@ -107,6 +116,19 @@ GLOBAL_AUDIO_CONFIG = {
 }
 ROBOT_CONTROL_URL = os.getenv("ROBOT_CONTROL_URL", "http://192.168.1.6:9000").rstrip("/")
 
+
+@app.on_event("startup")
+async def startup_local_llm():
+    try:
+        await run_in_threadpool(initialize_local_backend)
+    except Exception as e:
+        log.warning(f"⚠️ Local LLM backend startup skipped: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_local_llm():
+    await run_in_threadpool(shutdown_local_backend)
+
 # Remote Mic Control – Cột đèn giao thông giữa Operator và App
 # idle = ngủ, listening = đang thu âm, processing = đang xử lý STT
 _robot_mic_status = "idle"
@@ -161,9 +183,11 @@ async def list_vi_voices():
 
 @app.get("/configs")
 async def get_configs():
+    local_backend = await run_in_threadpool(get_local_backend_status)
     return {
         "config": GLOBAL_AUDIO_CONFIG,
         "robot_control_url": ROBOT_CONTROL_URL,
+        "local_llm": local_backend,
         "available_voices": CHIRP3_HD_VOICES,
         "available_stt_models": ["nova-2", "nova-2-general", "whisper-large"],
         "available_stt_languages": [
