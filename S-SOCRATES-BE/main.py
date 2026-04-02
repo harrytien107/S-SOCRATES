@@ -10,6 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
+load_dotenv()
+
 from services.stt_service import process_stt_request
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
 from services.llm_service import (
@@ -128,6 +130,19 @@ async def startup_local_llm():
 @app.on_event("shutdown")
 async def shutdown_local_llm():
     await run_in_threadpool(shutdown_local_backend)
+
+
+@app.on_event("startup")
+async def startup_local_llm():
+    try:
+        initialize_local_backend()
+    except Exception as e:
+        log.warning(f"⚠️ Local LLM backend startup skipped: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_local_llm():
+    shutdown_local_backend()
 
 # Remote Mic Control – Cột đèn giao thông giữa Operator và App
 # idle = ngủ, listening = đang thu âm, processing = đang xử lý STT
@@ -368,7 +383,7 @@ async def operator_decision(req: DecisionRequest):
         text = req.selected_answer
         emotion = "speaking"
     elif req.mode == "ai":
-        # Using Ollama (Local LLM) through ask_socrates
+        # Using selected local LLM backend (Ollama or TurboQuant) through ask_socrates
         text = ask_socrates(req.transcript, model_choice="ollama")
         emotion = "speaking"
     elif req.mode == "gemini":

@@ -351,6 +351,193 @@ def get_local_backend_status() -> dict:
             "managed_by_app": _managed_local_process is not None,
         }
 
+def _start_ollama_process(config: LocalLLMConfig) -> subprocess.Popen:
+    cmd = [config.ollama_cmd, "serve"]
+    log.info(
+        "🚀 Starting Ollama local backend at %s using model %s",
+        config.api_base,
+        config.ollama_model_name,
+    )
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(BASE_DIR),
+    )
+
+
+def _start_turboquant_process(config: LocalLLMConfig) -> subprocess.Popen:
+    if not config.turboquant_server_bin:
+        raise RuntimeError("TURBOQUANT_SERVER_BIN chưa được cấu hình.")
+    if not config.gguf_path:
+        raise RuntimeError("LOCAL_LLM_GGUF_PATH chưa được cấu hình cho turboquant.")
+    if not Path(config.turboquant_server_bin).exists():
+        raise RuntimeError(
+            f"Không tìm thấy binary llama-server tại {config.turboquant_server_bin}"
+        )
+    if not Path(config.gguf_path).exists():
+        raise RuntimeError(f"Không tìm thấy model GGUF tại {config.gguf_path}")
+
+    cmd = [
+        config.turboquant_server_bin,
+        "--host",
+        config.host,
+        "--port",
+        str(config.port),
+        "-m",
+        config.gguf_path,
+        "-ngl",
+        str(config.turboquant_ngl),
+        "-c",
+        str(config.turboquant_ctx),
+        "--flash-attn",
+        "on",
+        "--cache-type-k",
+        config.turboquant_cache_type,
+        "--cache-type-v",
+        config.turboquant_cache_type,
+        "--jinja",
+    ]
+    log.info(
+        "🚀 Starting TurboQuant local backend at %s using model %s",
+        config.api_base,
+        config.gguf_path,
+    )
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(BASE_DIR),
+    )
+
+
+def _start_local_process(config: LocalLLMConfig) -> subprocess.Popen:
+    if config.backend == "ollama":
+        return _start_ollama_process(config)
+    return _start_turboquant_process(config)
+
+
+def _is_backend_ready(config: LocalLLMConfig) -> bool:
+    return _http_ready(config.health_url, timeout=min(config.timeout_s, 5.0))
+
+
+def shutdown_local_backend() -> None:
+    global _local_query_engine, _local_backend_name
+    global _managed_local_process, _managed_local_backend, _managed_local_command
+
+    with _runtime_lock:
+        process = _managed_local_process
+        backend = _managed_local_backend
+        command = _managed_local_command
+
+        _local_query_engine = None
+        _local_backend_name = None
+        _managed_local_process = None
+        _managed_local_backend = None
+        _managed_local_command = None
+
+        if process is None:
+            return
+
+        log.info("🧹 Stopping app-managed local backend %s", backend)
+        try:
+            process.terminate()
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            log.warning("⚠️ Local backend did not stop in time, killing it.")
+            process.kill()
+            process.wait(timeout=5)
+        except Exception as exc:
+            log.error("❌ Failed to stop local backend %s (%s): %s", backend, command, exc)
+
+
+def initialize_local_backend(force_restart: bool = False) -> None:
+    global _local_query_engine, _local_backend_name
+    global _managed_local_process, _managed_local_backend, _managed_local_command
+
+    config = _load_local_config()
+    with _runtime_lock:
+        if force_restart:
+            shutdown_local_backend()
+        elif (
+            _local_query_engine is not None
+            and _local_backend_name == config.backend
+        ):
+            return
+        elif _managed_local_process is not None and _managed_local_backend != config.backend:
+            shutdown_local_backend()
+
+        if _is_backend_ready(config):
+            log.info(
+                "✅ Reusing existing %s local backend at %s (model=%s)",
+                config.backend,
+                config.api_base,
+                config.model_name if config.backend == "turboquant" else config.ollama_model_name,
+            )
+            _local_query_engine = _build_local_query_engine(config)
+            _local_backend_name = config.backend
+            return
+
+        if not config.autostart:
+            raise RuntimeError(
+                f"Local backend '{config.backend}' chưa sẵn sàng tại {config.api_base} "
+                "và LOCAL_LLM_AUTOSTART=0."
+            )
+
+        shutdown_local_backend()
+        process = _start_local_process(config)
+        _managed_local_process = process
+        _managed_local_backend = config.backend
+        _managed_local_command = process.args
+
+        ready = _wait_until_ready(
+            lambda: _is_backend_ready(config),
+            timeout_s=min(max(config.timeout_s, 30.0), 180.0),
+        )
+        if not ready:
+            shutdown_local_backend()
+            raise RuntimeError(
+                f"Local backend '{config.backend}' không sẵn sàng tại {config.api_base}."
+            )
+
+        _local_query_engine = _build_local_query_engine(config)
+        _local_backend_name = config.backend
+        log.info(
+            "✅ Local backend ready: backend=%s host=%s port=%s model=%s gguf=%s",
+            config.backend,
+            config.host,
+            config.port,
+            config.model_name if config.backend == "turboquant" else config.ollama_model_name,
+            config.gguf_path or "-",
+        )
+
+
+def _get_local_query_engine():
+    with _runtime_lock:
+        if _local_query_engine is None:
+            initialize_local_backend()
+        return _local_query_engine
+
+
+def get_local_backend_status() -> dict:
+    config = _load_local_config()
+    with _runtime_lock:
+        return {
+            "backend": config.backend,
+            "host": config.host,
+            "port": config.port,
+            "api_base": config.api_base,
+            "model_name": config.model_name if config.backend == "turboquant" else config.ollama_model_name,
+            "gguf_path": config.gguf_path or None,
+            "autostart": config.autostart,
+            "ready": _is_backend_ready(config),
+            "managed_by_app": _managed_local_process is not None,
+        }
+
+
+# =========================
+# Gemini (Cloud) - Dynamic Model
+# =========================
 
 _gemini_engine = None
 _current_gemini_model = None
