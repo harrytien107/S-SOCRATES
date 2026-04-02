@@ -5,6 +5,17 @@ import 'package:http/http.dart' as http;
 import 'package:voice_chat_app/services/api_config.dart';
 
 class AgentAPI {
+  Future<bool> pingBackend() async {
+    try {
+      final response = await http
+          .get(Uri.parse('${ApiConfig.baseUrl}/'))
+          .timeout(const Duration(seconds: 3));
+      return response.statusCode >= 200 && response.statusCode < 500;
+    } catch (e) {
+      debugPrint('AgentAPI pingBackend error: $e');
+      return false;
+    }
+  }
 
   Future<Map<String, dynamic>?> processAudio(String filePath) async {
     try {

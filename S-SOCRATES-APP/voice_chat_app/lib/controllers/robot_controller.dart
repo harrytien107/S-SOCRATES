@@ -17,6 +17,8 @@ class RobotController {
       ValueNotifier(null);
 
   String _lastMicStatus = 'idle';
+  Timer? _backendHealthTimer;
+  bool _isCheckingBackend = false;
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AgentAPI _agentAPI = AgentAPI();
@@ -29,12 +31,41 @@ class RobotController {
   void startPolling() {
     unawaited(_robotControlServer.start());
     debugPrint('Robot direct control server started on port 9000');
+    unawaited(refreshBackendStatus());
+    _backendHealthTimer?.cancel();
+    _backendHealthTimer = Timer.periodic(
+      const Duration(seconds: 3),
+      (_) => unawaited(refreshBackendStatus()),
+    );
   }
 
   void stopPolling() {
+    _backendHealthTimer?.cancel();
+    _backendHealthTimer = null;
     unawaited(_robotControlServer.stop());
     TtsService.stop();
     debugPrint('Robot direct control stopped');
+  }
+
+  Future<void> refreshBackendStatus() async {
+    if (_isCheckingBackend) return;
+    _isCheckingBackend = true;
+    try {
+      final reachable = await _agentAPI.pingBackend();
+      if (isBackendReachable.value != reachable) {
+        isBackendReachable.value = reachable;
+      }
+      if (!reachable) {
+        currentMessage.value = 'Mất kết nối tới backend.';
+        state.value = RobotUiState.error;
+      } else if (state.value == RobotUiState.error &&
+          currentMessage.value == 'Mất kết nối tới backend.') {
+        currentMessage.value = '';
+        state.value = RobotUiState.idle;
+      }
+    } finally {
+      _isCheckingBackend = false;
+    }
   }
 
   void clearConnectionWarning() {
@@ -127,12 +158,14 @@ class RobotController {
 
       final result = await _agentAPI.processAudio(path);
       if (result == null) {
+        isBackendReachable.value = false;
         _remoteLog('processAudio returned null');
         currentMessage.value = 'Không gửi được audio lên server.';
         state.value = RobotUiState.error;
         return;
       }
 
+      isBackendReachable.value = true;
       latestTranscriptResult.value = result;
 
       final transcript = (result['transcript'] as String?)?.trim() ?? '';
