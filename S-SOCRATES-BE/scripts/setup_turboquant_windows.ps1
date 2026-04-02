@@ -97,6 +97,7 @@ function Find-NvccPath {
 
 function Find-VsDevCmd {
     $candidates = @(
+        "C:\BuildTools\Common7\Tools\VsDevCmd.bat",
         "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat",
         "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
     )
@@ -141,7 +142,7 @@ function Set-DotEnvValue {
 
     $updated = $false
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i] -match "^\Q$Key\E=") {
+        if ($lines[$i].StartsWith("$Key=")) {
             $lines[$i] = "$Key=$Value"
             $updated = $true
             break
@@ -306,8 +307,7 @@ Set-DotEnvValue -EnvFile $EnvFile -Key "TURBOQUANT_NGL" -Value "$TurboQuantNgl"
 Set-DotEnvValue -EnvFile $EnvFile -Key "TURBOQUANT_CTX" -Value "$TurboQuantCtx"
 
 Write-Step "Hoàn tất"
-Write-Host "Backend root : $BackendRoot"
-Write-Host "Workspace    : $WorkspaceRoot"
+Write-Host "TurboQuant repo: $RepoDir"
 Write-Host "Model GGUF   : $ModelPath"
 Write-Host "llama-server : $ServerExe"
 Write-Host "Python venv  : $venvPython"
