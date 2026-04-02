@@ -384,8 +384,3 @@ async def send_to_robot(req: RobotCommand):
         "command": _latest_robot_command,
         "robot_response": robot_response,
     }
-
-@app.get("/robot-command")
-async def get_robot_command():
-    # Frontend deduplicates via timestamp, do not destroy the command.
-    return _latest_robot_command

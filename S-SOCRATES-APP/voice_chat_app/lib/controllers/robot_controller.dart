@@ -16,8 +16,6 @@ class RobotController {
   final ValueNotifier<Map<String, dynamic>?> latestTranscriptResult =
       ValueNotifier(null);
 
-  Timer? _pollingTimer;
-  Timer? _micPollTimer;
   String _lastMicStatus = 'idle';
 
   final AudioRecorder _audioRecorder = AudioRecorder();
@@ -29,15 +27,11 @@ class RobotController {
   );
 
   void startPolling() {
-    _pollingTimer?.cancel();
-    _micPollTimer?.cancel();
     unawaited(_robotControlServer.start());
     debugPrint('Robot direct control server started on port 9000');
   }
 
   void stopPolling() {
-    _pollingTimer?.cancel();
-    _micPollTimer?.cancel();
     unawaited(_robotControlServer.stop());
     TtsService.stop();
     debugPrint('Robot direct control stopped');
