@@ -37,7 +37,7 @@ _index = VectorStoreIndex.from_documents(_documents)
 # --- Engine 1: Ollama (Local) ---
 def _init_ollama_engine():
     llm = Ollama(
-        model="qwen2:7b",
+        model="qwen2:1.5b",
         request_timeout=120.0
     )
     return _index.as_query_engine(llm=llm)

@@ -148,26 +148,6 @@ const Map<RobotUiState, AiExpressionData> kExpressions = {
     mouthOpacity: 0.95,
   ),
 
-  // Tinh nghịch / thách thức
-  RobotUiState.challenge: AiExpressionData(
-    eyeHalfW: 0.14,
-    eyeBarH: 0.024,
-    eyeSpread: 0.26,
-    eyeVertical: -0.22,
-    leftTilt: -0.10,
-    rightTilt: 0.16,
-    leftVOff: 0.012,
-    rightVOff: -0.030,
-    eyeOpacity: 0.98,
-    mouthHalfW: 0.18,
-    mouthVertical: 0.17,
-    mouthCurve: 0.32,
-    mouthSkew: 0.07,
-    mouthOpen: 0.06,
-    mouthThickness: 0.018,
-    mouthOpacity: 0.92,
-  ),
-
   // Khong nhan duoc voice -> khuon mat that vong
   RobotUiState.noVoice: AiExpressionData(
     eyeHalfW: 0.11,

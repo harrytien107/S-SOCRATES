@@ -28,29 +28,35 @@ class AgentAPI {
 
       if (response.statusCode == 500) {
         throw Exception(
-            'Backend lỗi nội bộ (500). Kiểm tra Ollama có đang chạy không.');
+          'Backend lỗi nội bộ (500). Kiểm tra Ollama có đang chạy không.',
+        );
       }
 
       throw Exception('API lỗi ${response.statusCode}: ${response.body}');
     } on TimeoutException {
       throw Exception(
-          'Hết thời gian chờ (timeout). Backend hoặc Ollama phản hồi quá lâu.');
+        'Hết thời gian chờ (timeout). Backend hoặc Ollama phản hồi quá lâu.',
+      );
     } on http.ClientException catch (e) {
       debugPrint('AgentAPI ClientException: $e');
       throw Exception(
-          'Không kết nối được backend tại ${ApiConfig.baseUrl}. '
-          'Kiểm tra backend đang chạy và CORS đã bật.');
+        'Không kết nối được backend tại ${ApiConfig.baseUrl}. '
+        'Kiểm tra backend đang chạy và CORS đã bật.',
+      );
     }
   }
 
   Future<Map<String, dynamic>?> processAudio(String filePath) async {
     try {
       final request = http.MultipartRequest(
-          'POST', Uri.parse('${ApiConfig.baseUrl}/process-audio'));
+        'POST',
+        Uri.parse('${ApiConfig.baseUrl}/process-audio'),
+      );
       request.files.add(await http.MultipartFile.fromPath('file', filePath));
 
-      final streamedResponse =
-          await request.send().timeout(const Duration(seconds: 45));
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 45),
+      );
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200) {
@@ -69,12 +75,15 @@ class AgentAPI {
 
   Future<String> speechToText(String filePath) async {
     try {
-      final request =
-          http.MultipartRequest('POST', Uri.parse('${ApiConfig.baseUrl}/stt'));
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('${ApiConfig.baseUrl}/stt'),
+      );
       request.files.add(await http.MultipartFile.fromPath('file', filePath));
 
-      final streamedResponse =
-          await request.send().timeout(const Duration(seconds: 45));
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 45),
+      );
       final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 200) {
@@ -90,6 +99,7 @@ class AgentAPI {
       throw Exception('Lỗi nhận diện giọng nói: $e');
     }
   }
+
   Future<Map<String, dynamic>?> getRobotCommand() async {
     try {
       final response = await http
@@ -106,6 +116,20 @@ class AgentAPI {
     } catch (e) {
       debugPrint('AgentAPI getRobotCommand error: $e');
       return null;
+    }
+  }
+
+  Future<void> syncRobotMicStatus(String status) async {
+    try {
+      await http
+          .post(
+            Uri.parse('${ApiConfig.baseUrl}/robot/mic-sync'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'status': status}),
+          )
+          .timeout(const Duration(seconds: 3));
+    } catch (e) {
+      debugPrint('AgentAPI syncRobotMicStatus error: $e');
     }
   }
 
@@ -143,7 +167,7 @@ class AgentAPI {
     try {
       await http
           .post(
-            Uri.parse('${ApiConfig.baseUrl}/operator/mic-control'),
+            Uri.parse('${ApiConfig.baseUrl}/robot/mic-control'),
             headers: {'Content-Type': 'application/json'},
             body: jsonEncode({'action': action}),
           )

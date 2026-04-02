@@ -1,12 +1,73 @@
 let currentData = null;
-let selectedEmotion = 'neutral';
+let selectedEmotion = 'idle';
 let lastLogMsg = "";
+let hasReceivedDeepgramData = false; // Track xem đã nhận dữ liệu từ Deepgram chưa
+let selectedAiInputSource = 'deepgram';
 
 // Remote Mic Control State
 let isMicActive = false;
 let micTimerInterval = null;
 let micStartTime = null;
 const NO_VOICE_FALLBACK_TEXT = 'Không nhận được voice. Vui lòng nói lại.';
+let isPageUnloading = false;
+
+function consumeEvent(event) {
+    if (!event) return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (typeof event.stopImmediatePropagation === 'function') {
+        event.stopImmediatePropagation();
+    }
+}
+
+function getManualQuestionText() {
+    const manualBox = document.getElementById('manual-question-box');
+    return manualBox ? manualBox.innerText.trim() : '';
+}
+
+function getDeepgramText() {
+    return currentData?.transcript?.trim?.() || '';
+}
+
+function getAiInputText() {
+    return selectedAiInputSource === 'manual'
+        ? getManualQuestionText()
+        : getDeepgramText();
+}
+
+function updateAiSourceUI() {
+    const deepgramBtn = document.getElementById('source-deepgram-btn');
+    const manualBtn = document.getElementById('source-manual-btn');
+    const deepgramBox = document.getElementById('transcript-box');
+    const manualBox = document.getElementById('manual-question-box');
+    const activeLabel = document.getElementById('active-input-source');
+    const isManual = selectedAiInputSource === 'manual';
+
+    if (deepgramBtn) deepgramBtn.classList.toggle('active', !isManual);
+    if (manualBtn) manualBtn.classList.toggle('active', isManual);
+    if (deepgramBox) deepgramBox.classList.toggle('ai-source-active', !isManual);
+    if (manualBox) manualBox.classList.toggle('ai-source-active', isManual);
+    if (activeLabel) {
+        activeLabel.innerText = `Nguồn hiện tại cho AI: ${isManual ? 'Manual Operator Chat' : 'Deepgram Transcript'}`;
+    }
+}
+
+function setAiInputSource(source, explicit = false) {
+    const normalized = source === 'manual' ? 'manual' : 'deepgram';
+    selectedAiInputSource = normalized;
+    updateAiSourceUI();
+    if (explicit) {
+        addLog(`🔀 AI source: ${normalized === 'manual' ? 'Manual Operator Chat' : 'Deepgram Transcript'}`);
+    }
+}
+
+function getApiBase() {
+    return window.location.origin.replace(/\/+$/, '');
+}
+
+function normalizeEmotion(emo) {
+    return emo === 'neutral' ? 'idle' : emo;
+}
 
 function formatTimer(ms) {
     const totalSec = Math.floor(ms / 1000);
@@ -17,23 +78,36 @@ function formatTimer(ms) {
 
 // === Gửi lệnh Mic tới Backend ===
 async function _sendMicAction(action) {
-    const base = document.getElementById('api-base').value;
+    const base = getApiBase();
     try {
-        await fetch(`${base}/operator/mic-control`, {
+        const response = await fetch(`${base}/robot/mic-control`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action })
         });
+        const rawText = await response.text();
+        let result = {};
+        try {
+            result = rawText ? JSON.parse(rawText) : {};
+        } catch (_) {
+            result = { error: rawText || `HTTP ${response.status}` };
+        }
+        if (!response.ok || result.error) {
+            throw new Error(result.error || `HTTP ${response.status}`);
+        }
         return true;
     } catch (err) {
-        addLog(`⚠️ Không gửi được lệnh mic: ${action}`);
+        const reason = err?.message || 'Unknown error';
+        addLog(`⚠️ Không gửi được lệnh mic: ${action} | ${reason}`);
+        statusMessage(`Mic command failed: ${action} | ${reason}`, 'error');
         return false;
     }
 }
 
 // === QUICK SEND — Gửi emotion trực tiếp qua /send-to-robot ===
 async function quickSendEmotion(emo, btn) {
-    const base = document.getElementById('api-base').value;
+    const base = getApiBase();
+    emo = normalizeEmotion(emo);
 
     setEmotion(emo, btn, false);
 
@@ -60,34 +134,64 @@ async function quickSendEmotion(emo, btn) {
     }
 }
 
-async function cancelRobotMic() {
+async function cancelRobotMic(event) {
+    consumeEvent(event);
     if (!isMicActive) return;
     if (await _sendMicAction('cancel')) {
         isMicActive = false;
+        updateMicButtons();
         addLog(`❌ Đã HỦY thu âm. Dữ liệu không được gửi.`);
     }
 }
 
-async function toggleRobotMic() {
-    const action = isMicActive ? 'stop' : 'start';
-    const ok = await _sendMicAction(action);
+function updateMicButtons() {
+    const startBtn = document.getElementById('mic-start-btn');
+    const stopBtn = document.getElementById('mic-stop-btn');
+    const cancelBtn = document.getElementById('mic-cancel-btn');
+    if (!startBtn || !stopBtn || !cancelBtn) return;
+
+    startBtn.disabled = false;
+    stopBtn.disabled = !isMicActive;
+    cancelBtn.disabled = !isMicActive;
+}
+
+async function startRobotMic(event) {
+    consumeEvent(event);
+    const ok = await _sendMicAction('start');
     if (!ok) return;
 
-    isMicActive = !isMicActive;
-    if (isMicActive) {
-        addLog(`🎙️ Đã gửi lệnh BẬT mic robot.`);
-    } else {
-        addLog(`📤 Đã gửi lệnh TẮT mic và upload audio.`);
-    }
+    isMicActive = true;
+    updateMicButtons();
+    setEmotion('idle', null, false);
+    addLog(`🎙️ Đã gửi lệnh BẬT mic robot.`);
+    statusMessage('Robot microphone started', 'success');
+}
+
+async function stopRobotMic(event) {
+    consumeEvent(event);
+    if (!isMicActive) return;
+    const ok = await _sendMicAction('stop');
+    if (!ok) return;
+
+    isMicActive = false;
+    updateMicButtons();
+    addLog(`📤 Đã gửi lệnh TẮT mic và upload audio.`);
+    statusMessage('Robot is uploading audio', 'normal');
 }
 
 // === WEBSOCKET CONNECTION ===
 let ws = null;
 let reconnectTimer = null;
+let heartbeatTimer = null;
 let _lastSyncedStatus = 'idle';
 
 function connectWebSocket() {
-    const baseInput = document.getElementById('api-base').value;
+    if (isPageUnloading) return;
+    if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+    }
+
+    const baseInput = getApiBase();
     let wsUrl = baseInput.replace('http:', 'ws:').replace('https:', 'wss:') + '/ws/operator';
     
     addLog('🔌 Connecting to WebSocket...');
@@ -96,7 +200,18 @@ function connectWebSocket() {
     ws.onopen = () => {
         document.getElementById('online-dot').classList.add('active');
         addLog("🟢 WebSocket Connected!");
-        if (reconnectTimer) clearInterval(reconnectTimer);
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = null;
+        }
+        if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+        }
+        heartbeatTimer = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('ping');
+            }
+        }, 15000);
     };
 
     ws.onmessage = (event) => {
@@ -110,10 +225,17 @@ function connectWebSocket() {
 
                 if (status === 'listening' && !isMicActive) {
                     isMicActive = true;
+                    updateMicButtons();
                     addLog(`🎙️ [Sync] App bật Mic.`);
                 } else if (status !== 'listening' && isMicActive) {
                     isMicActive = false;
+                    updateMicButtons();
                     if (status === 'processing') addLog(`📤 [Sync] App gửi audio lên Server.`);
+                }
+
+                if (status === 'idle') {
+                    isMicActive = false;
+                    updateMicButtons();
                 }
             }
             
@@ -133,69 +255,105 @@ function connectWebSocket() {
     };
 
     ws.onclose = () => {
+        if (isPageUnloading) return;
         document.getElementById('online-dot').classList.remove('active');
         addLog("🔴 WebSocket Disconnected. Reconnecting...");
-        ws = null;
-        if (!reconnectTimer) {
-            reconnectTimer = setInterval(connectWebSocket, 3000);
+        if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+            heartbeatTimer = null;
         }
+        ws = null;
+        scheduleReconnect();
     };
 
     ws.onerror = (error) => {
         console.error("WebSocket Error: ", error);
-        ws.close();
     };
 }
 
-window.onload = () => {
-    const saved = localStorage.getItem('socrates_api_base');
-    if (saved) document.getElementById('api-base').value = saved;
+function scheduleReconnect() {
+    if (isPageUnloading) return;
+    if (reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+        reconnectTimer = null;
+        connectWebSocket();
+    }, 3000);
+}
 
+window.onload = () => {
     const preview = document.getElementById('final-preview');
     const transcriptBox = document.getElementById('transcript-box');
+    const manualQuestionBox = document.getElementById('manual-question-box');
     preview.addEventListener('input', updateSendButton);
     preview.addEventListener('paste', (e) => e.preventDefault());
     preview.addEventListener('keydown', (e) => e.preventDefault());
-    transcriptBox.addEventListener('input', handleTranscriptInput);
+    if (manualQuestionBox) {
+        manualQuestionBox.addEventListener('input', handleManualQuestionInput);
+    }
     
     checkConnection();
     loadPresetQuestions();
     updateSendButton();
+    updateMicButtons();
     addLog("Console Ready.");
     connectWebSocket();
 };
 
-function handleTranscriptInput() {
-    const transcriptBox = document.getElementById('transcript-box');
-    const transcript = transcriptBox.innerText.trim();
+window.addEventListener('beforeunload', () => {
+    isPageUnloading = true;
+    if (reconnectTimer) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+    }
+    if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+    }
+    if (ws) {
+        try {
+            ws.onclose = null;
+            ws.close();
+        } catch (_) {}
+        ws = null;
+    }
+});
+
+function handleManualQuestionInput() {
+    const manualBox = document.getElementById('manual-question-box');
+    const transcript = manualBox.innerText.trim();
     setTranscriptWarning('');
 
     if (!currentData) {
         currentData = { transcript: '', candidates: [] };
     }
 
-    currentData.transcript = transcript;
-
     if (!transcript) {
-        transcriptBox.innerText = '';
-        addLog("📝 Transcript đã được xóa.");
+        addLog("📝 Ô chat tay đã được xóa.");
         return;
     }
 
-    addLog("📝 Operator đang nhập transcript thủ công.");
+    setAiInputSource('manual');
+    addLog("📝 Operator đang nhập câu hỏi tay.");
 }
 
-function clearTranscriptBox() {
+function clearInputBoxes() {
     const transcriptBox = document.getElementById('transcript-box');
+    const manualBox = document.getElementById('manual-question-box');
+    const finalPreview = document.getElementById('final-preview');
     transcriptBox.innerText = '';
+    if (manualBox) manualBox.innerText = '';
+    if (finalPreview) finalPreview.innerText = '';
     setTranscriptWarning('');
 
     if (!currentData) {
         currentData = { transcript: '', candidates: [] };
     }
     currentData.transcript = '';
+    hasReceivedDeepgramData = false;
+    setAiInputSource('deepgram');
+    updateSendButton();
 
-    addLog("🧹 Đã xóa transcript để operator nhập mới.");
+    addLog("🧹 Đã xóa transcript, ô chat tay và preview.");
 }
 
 function isNoVoiceTranscript(text) {
@@ -218,7 +376,7 @@ function setTranscriptWarning(message) {
 }
 
 async function loadPresetQuestions() {
-    const base = document.getElementById('api-base').value;
+    const base = getApiBase();
     const list = document.getElementById('suggestions-list');
     const count = document.getElementById('match-count');
 
@@ -306,15 +464,77 @@ function togglePreviewModal(show) {
     modal.classList.toggle('open', show);
 }
 
+function toggleTranscriptModal(show) {
+    const modal = document.getElementById('transcript-expand-modal');
+    const content = document.getElementById('transcript-expand-content');
+    if (!modal || !content) return;
+
+    if (show) {
+        const transcript = document.getElementById('transcript-box');
+        content.innerText = transcript ? transcript.innerText : '';
+    }
+    modal.classList.toggle('open', show);
+}
+
+function toggleManualModal(show) {
+    const modal = document.getElementById('manual-expand-modal');
+    const content = document.getElementById('manual-expand-content');
+    const manual = document.getElementById('manual-question-box');
+
+    if (!modal || !content || !manual) return;
+
+    if (show) {
+        // Mở modal: copy từ ô chính sang ô expand
+        content.innerText = manual.innerText || '';
+    } else {
+        // Đóng modal: copy ngược từ ô expand về ô chính
+        manual.innerText = content.innerText || '';
+
+        // nếu muốn giữ logic hiện có của bạn
+        handleManualQuestionInput();
+    }
+
+    modal.classList.toggle('open', show);
+}
+
+window.onload = () => {
+    const preview = document.getElementById('final-preview');
+    const manualQuestionBox = document.getElementById('manual-question-box');
+    const manualExpandBox = document.getElementById('manual-expand-content');
+
+    preview.addEventListener('input', updateSendButton);
+    preview.addEventListener('paste', (e) => e.preventDefault());
+    preview.addEventListener('keydown', (e) => e.preventDefault());
+
+    if (manualQuestionBox) {
+        manualQuestionBox.addEventListener('input', handleManualQuestionInput);
+    }
+
+    if (manualExpandBox && manualQuestionBox) {
+        manualExpandBox.addEventListener('input', () => {
+            manualQuestionBox.innerText = manualExpandBox.innerText;
+            handleManualQuestionInput();
+        });
+    }
+
+    checkConnection();
+    loadPresetQuestions();
+    updateAiSourceUI();
+    updateSendButton();
+    updateMicButtons();
+    addLog("Console Ready.");
+    connectWebSocket();
+};
+
 async function saveSettings() {
-    const base = document.getElementById('api-base').value;
-    localStorage.setItem('socrates_api_base', base);
+    const base = getApiBase();
 
     try {
         await fetch(`${base}/configs`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                robot_control_url: document.getElementById('robot-control-url').value.trim(),
                 tts_voice: document.getElementById('cfg-tts-voice').value,
                 tts_speed: parseFloat(document.getElementById('cfg-tts-speed').value),
                 stt_model: document.getElementById('cfg-stt-model').value,
@@ -333,12 +553,15 @@ async function saveSettings() {
 }
 
 async function syncConfigs() {
-    const base = document.getElementById('api-base').value;
+    const base = getApiBase();
     try {
         const res = await fetch(`${base}/configs`);
         if (!res.ok) return;
         const data = await res.json();
         const cfg = data.config;
+        const robotUrlEl = document.getElementById('robot-control-url');
+
+        if (robotUrlEl) robotUrlEl.value = data.robot_control_url || '';
 
         const voiceEl = document.getElementById('cfg-tts-voice');
         if (voiceEl) voiceEl.value = cfg.tts_voice;
@@ -365,7 +588,7 @@ async function syncConfigs() {
 }
 
 function checkConnection() {
-    const base = document.getElementById('api-base').value;
+    const base = getApiBase();
     fetch(`${base}/`).then(() => {
         addLog("HTTP API Online. Waiting for WS...");
         document.getElementById('online-dot').classList.add('active');
@@ -378,7 +601,7 @@ function checkConnection() {
 async function handleFileUpload(input) {
     if (!input.files || !input.files[0]) return;
     const file = input.files[0];
-    const base = document.getElementById('api-base').value;
+    const base = getApiBase();
     
     toggleModal(false);
     addLog(`Audio File: ${file.name}`);
@@ -406,14 +629,25 @@ function displayWorkflow(data) {
     if (!currentData) currentData = {};
     const transcript = (data.transcript || '').trim();
 
-    if (isNoVoiceTranscript(transcript)) {
+    // Đánh dấu đã nhận dữ liệu từ Deepgram khi có transcript property
+    if (typeof data.transcript !== 'undefined') {
+        hasReceivedDeepgramData = true;
+    }
+    
+    // Chỉ hiển thị warning khi đã nhận dữ liệu từ Deepgram và transcript rỗng
+    if (isNoVoiceTranscript(transcript) && hasReceivedDeepgramData) {
+        document.getElementById('transcript-box').innerText = '';
         currentData.transcript = '';
-        setTranscriptWarning('Khong nhan duoc voice tu Deepgram. Operator co the nhap cau hoi thu cong ngay tai day.');
+        setTranscriptWarning('Nhận chuỗi rỗng từ Deepgram');
         addLog('⚠️ Deepgram không trả về câu hỏi. Operator cần nhập thủ công.');
     } else {
         document.getElementById('transcript-box').innerText = transcript;
         currentData.transcript = transcript;
         setTranscriptWarning('');
+    }
+
+    if (transcript) {
+        setAiInputSource('deepgram');
     }
 
     if (data.candidates && data.candidates.length > 0) {
@@ -463,23 +697,30 @@ function updateSendButton() {
     const rawText = document.getElementById('final-preview').innerText.trim();
     const btn = document.getElementById('send-trigger');
     const hasText = rawText.length > 0;
-    if (hasText && selectedEmotion === 'neutral') {
+    if (hasText && selectedEmotion === 'idle') {
         setEmotion('speaking', null, false);
         return;
     }
-    const textRequired = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
+    const textRequired = selectedEmotion === 'speaking';
 
     btn.disabled = textRequired && !hasText;
     if (btn.disabled) {
-        statusMessage("Speaking/Challenge cần nội dung để gửi");
+        statusMessage("Speaking cần nội dung để gửi");
         return;
     }
     statusMessage(textRequired ? "Ready to Send" : "Ready to Send (emotion only)");
 }
 
 async function useAI() {
-    const base = document.getElementById('api-base').value;
-    if (!currentData || !currentData.transcript) {
+    const base = getApiBase();
+    const aiInput = getAiInputText();
+    if (!aiInput) {
+        statusMessage(
+            selectedAiInputSource === 'manual'
+                ? "Manual Operator Chat đang trống"
+                : "Deepgram Transcript đang trống",
+            "error"
+        );
         return;
     }
     
@@ -495,7 +736,7 @@ async function useAI() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 mode: 'ai',
-                transcript: currentData.transcript
+                transcript: aiInput
             })
         });
         const result = await response.json();
@@ -516,8 +757,15 @@ async function useAI() {
 }
 
 async function useGemini() {
-    const base = document.getElementById('api-base').value;
-    if (!currentData || !currentData.transcript) {
+    const base = getApiBase();
+    const aiInput = getAiInputText();
+    if (!aiInput) {
+        statusMessage(
+            selectedAiInputSource === 'manual'
+                ? "Manual Operator Chat đang trống"
+                : "Deepgram Transcript đang trống",
+            "error"
+        );
         return;
     }
     
@@ -533,7 +781,7 @@ async function useGemini() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 mode: 'gemini',
-                transcript: currentData.transcript
+                transcript: aiInput
             })
         });
         const result = await response.json();
@@ -554,6 +802,7 @@ async function useGemini() {
 }
 
 function setEmotion(emo, btn, explicit = true) {
+    emo = normalizeEmotion(emo);
     if (selectedEmotion === emo) {
         document.querySelectorAll('.emotion-btn').forEach(el => {
             el.classList.toggle('active', el.dataset.emotion === emo);
@@ -568,29 +817,16 @@ function setEmotion(emo, btn, explicit = true) {
     updateSendButton();
 }
 
-async function setEmotionAndRecord(btn) {
-    setEmotion('listening', btn, true);
-
-    if (isMicActive) {
-        await toggleRobotMic();
-        return;
-    }
-
-    await toggleRobotMic();
-    addLog("🎙️ Listening thật — Mic đã bật kèm Emotion listening.");
-}
-
-async function sendToRobot() {
-    const base = document.getElementById('api-base').value;
+async function sendToRobot(event) {
+    consumeEvent(event);
+    const base = getApiBase();
     const rawText = document.getElementById('final-preview').innerText.trim();
-    if (rawText.length > 0 && selectedEmotion === 'neutral') {
+    if (rawText.length > 0 && selectedEmotion === 'idle') {
         setEmotion('speaking', null, false);
     }
-    const text = selectedEmotion === 'no_voice'
-        ? "Không nhận được voice. Vui lòng nói lại."
-        : rawText;
+    const text = rawText;
     const btn = document.getElementById('send-trigger');
-    const textRequired = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
+    const textRequired = selectedEmotion === 'speaking';
     if (textRequired && !text) return;
 
     btn.disabled = true;

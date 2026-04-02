@@ -38,37 +38,10 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
     _robotController.state.addListener(() {
       if (!mounted) return;
       final newState = _robotController.state.value;
-
-      // === LISTENING — Bật mic tự động ===
-      if (newState == RobotUiState.listening && !_isRecording) {
-        debugPrint('🎙️ [Auto] Remote command → bật mic');
-        setState(() {
-          _isRecording = true;
-          _uiState = RobotUiState.listening;
-        });
-        // Gọi startRecordingAudio nhưng KHÔNG cho nó thay đổi state
-        // (tránh cascade error → reset _isRecording)
-        _safeStartRecording();
-      }
-      // === UPLOADING — Tắt mic + gửi, KHÔNG check _isRecording ===
-      // Vì mic có thể đã bật bằng tap thủ công
-      else if (newState == RobotUiState.uploading) {
-        debugPrint('📤 [Auto] Remote command → tắt mic + gửi');
-        setState(() {
-          _isRecording = false;
-          _uiState = RobotUiState.uploading;
-        });
-        _robotController.stopRecordingAndProcess();
-      }
-      // Các state khác — chỉ sync UI
-      else {
-        setState(() {
-          _uiState = newState;
-          if (newState != RobotUiState.listening) {
-            _isRecording = false;
-          }
-        });
-      }
+      setState(() {
+        _uiState = newState;
+        _isRecording = newState == RobotUiState.listening;
+      });
     });
 
     _robotController.startPolling();
@@ -105,17 +78,6 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
       _uiState = RobotUiState.uploading;
     });
     await _robotController.manualStopRecording();
-  }
-
-  /// Bật mic an toàn từ remote command.
-  /// KHÔNG thay đổi state nếu lỗi (tránh cascade reset _isRecording).
-  Future<void> _safeStartRecording() async {
-    try {
-      await _robotController.startRecordingAudio();
-    } catch (e) {
-      debugPrint('⚠️ _safeStartRecording error: $e');
-      // KHÔNG set state = error ở đây — giữ nguyên listening
-    }
   }
 
   @override
@@ -172,8 +134,6 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
         Center(
           child: AiOrbWidget(state: _uiState, size: orbSize),
         ),
-
-
       ],
     );
   }

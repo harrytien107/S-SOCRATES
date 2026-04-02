@@ -7,7 +7,6 @@ enum RobotUiState {
   uploading,
   thinking,
   speaking,
-  challenge,
   noVoice,
   error
 }
@@ -25,8 +24,6 @@ extension RobotUiStateX on RobotUiState {
         return 'Đang suy nghĩ';
       case RobotUiState.speaking:
         return 'S-Socrates đang phản biện';
-      case RobotUiState.challenge:
-        return 'Thách thức!';
       case RobotUiState.noVoice:
         return '';
       case RobotUiState.error:
@@ -46,8 +43,6 @@ extension RobotUiStateX on RobotUiState {
         return const Color(0xFF00FFC8);
       case RobotUiState.speaking:
         return const Color(0xFF00EEFF);
-      case RobotUiState.challenge:
-        return const Color(0xFFFF9900);
       case RobotUiState.noVoice:
         return const Color(0xFFFFFF00);
       case RobotUiState.error:
@@ -72,8 +67,6 @@ extension RobotUiStateX on RobotUiState {
         return 0.80;
       case RobotUiState.speaking:
         return 0.40;
-      case RobotUiState.challenge:
-        return 1.10;
       case RobotUiState.noVoice:
         return 0.18;
       case RobotUiState.error:
@@ -94,8 +87,6 @@ extension RobotUiStateX on RobotUiState {
         return 1.20;
       case RobotUiState.speaking:
         return 0.60;
-      case RobotUiState.challenge:
-        return 1.50;
       case RobotUiState.noVoice:
         return 0.25;
       case RobotUiState.error:
@@ -116,8 +107,6 @@ extension RobotUiStateX on RobotUiState {
         return 0.90;
       case RobotUiState.speaking:
         return 0.70;
-      case RobotUiState.challenge:
-        return 1.60;
       case RobotUiState.noVoice:
         return 0.30;
       case RobotUiState.error:
@@ -125,5 +114,5 @@ extension RobotUiStateX on RobotUiState {
     }
   }
 
-  bool get showSubtitle => this == RobotUiState.speaking || this == RobotUiState.challenge;
+  bool get showSubtitle => this == RobotUiState.speaking;
 }

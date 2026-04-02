@@ -1,5 +1,7 @@
 import time
 import json
+import asyncio
+import httpx
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 import os
@@ -44,11 +46,14 @@ class ConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict):
-        for connection in self.active_connections:
+        stale_connections = []
+        for connection in list(self.active_connections):
             try:
-                await connection.send_json(message)
+                await asyncio.wait_for(connection.send_json(message), timeout=0.5)
             except Exception:
-                pass
+                stale_connections.append(connection)
+        for connection in stale_connections:
+            self.disconnect(connection)
 
 
 ws_manager = ConnectionManager()
@@ -72,7 +77,7 @@ class TTSRequest(BaseModel):
 
 class RobotCommand(BaseModel):
     text: str = ""
-    emotion: str  # "neutral", "speaking", "challenge"
+    emotion: str  # "neutral", "speaking", "no_voice", "error"
 
 class AudioConfigRequest(BaseModel):
     tts_voice: str = "Aoede"
@@ -80,6 +85,11 @@ class AudioConfigRequest(BaseModel):
     stt_model: str = "nova-2"
     stt_language: str = "vi"
     gemini_model: str = "models/gemini-2.0-flash"
+    robot_control_url: str | None = None
+
+
+class RobotSyncRequest(BaseModel):
+    status: str
 
 # =========================
 # Global Runtime State
@@ -95,6 +105,7 @@ GLOBAL_AUDIO_CONFIG = {
     "stt_language": "vi",
     "gemini_model": "models/gemini-2.0-flash",
 }
+ROBOT_CONTROL_URL = os.getenv("ROBOT_CONTROL_URL", "http://192.168.1.6:9000").rstrip("/")
 
 # Remote Mic Control – Cột đèn giao thông giữa Operator và App
 # idle = ngủ, listening = đang thu âm, processing = đang xử lý STT
@@ -152,6 +163,7 @@ async def list_vi_voices():
 async def get_configs():
     return {
         "config": GLOBAL_AUDIO_CONFIG,
+        "robot_control_url": ROBOT_CONTROL_URL,
         "available_voices": CHIRP3_HD_VOICES,
         "available_stt_models": ["nova-2", "nova-2-general", "whisper-large"],
         "available_stt_languages": [
@@ -165,11 +177,14 @@ async def get_configs():
 
 @app.post("/configs")
 async def update_configs(req: AudioConfigRequest):
+    global ROBOT_CONTROL_URL
     GLOBAL_AUDIO_CONFIG["tts_voice"] = req.tts_voice
     GLOBAL_AUDIO_CONFIG["tts_speed"] = max(0.25, min(2.0, req.tts_speed))
     GLOBAL_AUDIO_CONFIG["stt_model"] = req.stt_model
     GLOBAL_AUDIO_CONFIG["stt_language"] = req.stt_language
     GLOBAL_AUDIO_CONFIG["gemini_model"] = req.gemini_model
+    if req.robot_control_url:
+        ROBOT_CONTROL_URL = req.robot_control_url.rstrip("/")
     
     # Hot-swap Gemini model nếu thay đổi
     switch_gemini_model(req.gemini_model)
@@ -183,7 +198,17 @@ async def update_configs(req: AudioConfigRequest):
 class MicControlRequest(BaseModel):
     action: str  # "start" hoặc "stop"
 
-@app.post("/operator/mic-control")
+
+async def dispatch_robot_request(path: str, payload: dict | None = None):
+    url = f"{ROBOT_CONTROL_URL}{path}"
+    async with httpx.AsyncClient(timeout=5.0) as client:
+        response = await client.post(url, json=payload or {})
+        response.raise_for_status()
+        if not response.content:
+            return {"status": "ok"}
+        return response.json()
+
+@app.post("/robot/mic-control")
 async def mic_control(req: MicControlRequest):
     """Đạo diễn (Operator) bấm nút BẬT/TẮT Mic Robot từ xa."""
     global _robot_mic_status
@@ -196,8 +221,17 @@ async def mic_control(req: MicControlRequest):
     else:
         return {"error": "Invalid action. Use 'start', 'stop', or 'cancel'."}
 
+    try:
+        robot_response = await dispatch_robot_request("/mic", {"action": req.action})
+    except Exception as e:
+        return {"error": f"Failed to reach robot at {ROBOT_CONTROL_URL}: {e}"}
+
     await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
-    return {"status": f"Robot mic {req.action}", "mic_status": _robot_mic_status}
+    return {
+        "status": f"Robot mic {req.action}",
+        "mic_status": _robot_mic_status,
+        "robot_response": robot_response,
+    }
 
 @app.get("/robot/mic-status")
 async def get_mic_status():
@@ -211,6 +245,14 @@ async def mic_done():
     _robot_mic_status = "idle"
     await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
     return {"status": "Mic cycle complete", "mic_status": _robot_mic_status}
+
+
+@app.post("/robot/mic-sync")
+async def robot_mic_sync(req: RobotSyncRequest):
+    global _robot_mic_status
+    _robot_mic_status = req.status
+    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+    return {"status": "Robot mic synced", "mic_status": _robot_mic_status}
 
 
 class LogRequest(BaseModel):
@@ -234,6 +276,10 @@ async def websocket_operator(websocket: WebSocket):
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
         ws_manager.disconnect(websocket)
 
 # =========================
@@ -300,17 +346,13 @@ async def operator_decision(req: DecisionRequest):
     elif req.mode == "ai":
         # Using Ollama (Local LLM) through ask_socrates
         text = ask_socrates(req.transcript, model_choice="ollama")
-        emotion = "challenge"
+        emotion = "speaking"
     elif req.mode == "gemini":
         # Using Gemini (Cloud LLM) through ask_socrates
         text = ask_socrates(req.transcript, model_choice="gemini")
-        emotion = "challenge"
+        emotion = "speaking"
     else:
         return {"error": "Invalid mode"}
-
-    # Heuristic for emotion
-    if "phản biện" in text.lower() or "nhưng" in text.lower() or "thế nào" in text.lower():
-        emotion = "challenge"
 
     return {
         "text": text,
@@ -321,15 +363,27 @@ async def operator_decision(req: DecisionRequest):
 async def send_to_robot(req: RobotCommand):
     global _latest_robot_command
     text = (req.text or "").strip()
-    if req.emotion in {"speaking", "challenge"} and not text:
-        return {"error": "Text is required for speaking/challenge emotion"}
+    if req.emotion == "speaking" and not text:
+        return {"error": "Text is required for speaking emotion"}
 
     _latest_robot_command = {
         "text": text,
         "emotion": req.emotion,
         "timestamp": time.time_ns()
     }
-    return {"status": "Command sent to robot queue", "command": _latest_robot_command}
+    try:
+        robot_response = await dispatch_robot_request(
+            "/command",
+            {"text": text, "emotion": req.emotion},
+        )
+    except Exception as e:
+        return {"error": f"Failed to reach robot at {ROBOT_CONTROL_URL}: {e}"}
+
+    return {
+        "status": "Command sent directly to robot",
+        "command": _latest_robot_command,
+        "robot_response": robot_response,
+    }
 
 @app.get("/robot-command")
 async def get_robot_command():
