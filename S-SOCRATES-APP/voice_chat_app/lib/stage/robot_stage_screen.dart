@@ -35,41 +35,20 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
   }
 
   void _setupController() {
-    _robotController.state.addListener(() {
+    void syncUiState() {
       if (!mounted) return;
-      final newState = _robotController.state.value;
+      final backendReachable = _robotController.isBackendReachable.value;
+      final newState = backendReachable
+          ? _robotController.state.value
+          : RobotUiState.error;
+      setState(() {
+        _uiState = newState;
+        _isRecording = newState == RobotUiState.listening;
+      });
+    }
 
-      // === LISTENING — Bật mic tự động ===
-      if (newState == RobotUiState.listening && !_isRecording) {
-        debugPrint('🎙️ [Auto] Remote command → bật mic');
-        setState(() {
-          _isRecording = true;
-          _uiState = RobotUiState.listening;
-        });
-        // Gọi startRecordingAudio nhưng KHÔNG cho nó thay đổi state
-        // (tránh cascade error → reset _isRecording)
-        _safeStartRecording();
-      }
-      // === UPLOADING — Tắt mic + gửi, KHÔNG check _isRecording ===
-      // Vì mic có thể đã bật bằng tap thủ công
-      else if (newState == RobotUiState.uploading) {
-        debugPrint('📤 [Auto] Remote command → tắt mic + gửi');
-        setState(() {
-          _isRecording = false;
-          _uiState = RobotUiState.uploading;
-        });
-        _robotController.stopRecordingAndProcess();
-      }
-      // Các state khác — chỉ sync UI
-      else {
-        setState(() {
-          _uiState = newState;
-          if (newState != RobotUiState.listening) {
-            _isRecording = false;
-          }
-        });
-      }
-    });
+    _robotController.state.addListener(syncUiState);
+    _robotController.isBackendReachable.addListener(syncUiState);
 
     _robotController.startPolling();
   }
@@ -105,17 +84,6 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
       _uiState = RobotUiState.uploading;
     });
     await _robotController.manualStopRecording();
-  }
-
-  /// Bật mic an toàn từ remote command.
-  /// KHÔNG thay đổi state nếu lỗi (tránh cascade reset _isRecording).
-  Future<void> _safeStartRecording() async {
-    try {
-      await _robotController.startRecordingAudio();
-    } catch (e) {
-      debugPrint('⚠️ _safeStartRecording error: $e');
-      // KHÔNG set state = error ở đây — giữ nguyên listening
-    }
   }
 
   @override
@@ -172,8 +140,6 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
         Center(
           child: AiOrbWidget(state: _uiState, size: orbSize),
         ),
-
-
       ],
     );
   }
@@ -269,6 +235,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
             ),
             onPressed: () async {
               await ApiConfig.setBaseUrl(ctrl.text.trim());
+              await _robotController.refreshBackendStatus();
               if (ctx.mounted) Navigator.of(ctx).pop();
             },
             child: const Text(

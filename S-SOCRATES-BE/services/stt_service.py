@@ -10,6 +10,8 @@ from utils.logger import log
 # =========================
 
 DEEPGRAM_API_URL = "https://api.deepgram.com/v1/listen"
+DEEPGRAM_TIMEOUT_SECONDS = 15.0
+FALLBACK_NO_VOICE_TEXT = "Không nhận được voice. Vui lòng nói lại."
 
 
 def get_deepgram_api_key() -> str:
@@ -37,16 +39,29 @@ def transcribe_file(wav_path: str, model: str = "nova-2", language: str = "vi") 
     with open(wav_path, "rb") as audio_file:
         audio_data = audio_file.read()
 
-    with httpx.Client(timeout=120.0) as client:
-        response = client.post(url, headers=headers, content=audio_data)
-        response.raise_for_status()
+    try:
+        with httpx.Client(timeout=DEEPGRAM_TIMEOUT_SECONDS) as client:
+            response = client.post(url, headers=headers, content=audio_data)
+            response.raise_for_status()
 
-        data = response.json()
-        text = data["results"]["channels"][0]["alternatives"][0]["transcript"]
-        result = text.strip()
+            data = response.json()
+            text = data["results"]["channels"][0]["alternatives"][0]["transcript"]
+            result = text.strip()
+    except httpx.TimeoutException:
+        log.warning(
+            f"Deepgram timeout sau {DEEPGRAM_TIMEOUT_SECONDS:.0f}s cho file {wav_path}. "
+            f"Fallback về câu mặc định."
+        )
+        return FALLBACK_NO_VOICE_TEXT
+    except httpx.HTTPError as e:
+        log.warning(f"Deepgram HTTP error cho file {wav_path}: {e}. Fallback về câu mặc định.")
+        return FALLBACK_NO_VOICE_TEXT
+    except Exception as e:
+        log.warning(f"Deepgram unexpected error cho file {wav_path}: {e}. Fallback về câu mặc định.")
+        return FALLBACK_NO_VOICE_TEXT
 
     log.info(f"Deepgram STT result: '{result}'")
-    return result
+    return result or FALLBACK_NO_VOICE_TEXT
 
 def process_stt_request(file: UploadFile, model: str = "nova-2", language: str = "vi") -> str:
     log.info(f"--- Đã nhận file Upload '{file.filename}' từ Flutter (STT: {model}/{language}) ---")
