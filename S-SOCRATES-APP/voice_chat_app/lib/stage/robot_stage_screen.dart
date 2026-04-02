@@ -35,14 +35,20 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
   }
 
   void _setupController() {
-    _robotController.state.addListener(() {
+    void syncUiState() {
       if (!mounted) return;
-      final newState = _robotController.state.value;
+      final backendReachable = _robotController.isBackendReachable.value;
+      final newState = backendReachable
+          ? _robotController.state.value
+          : RobotUiState.error;
       setState(() {
         _uiState = newState;
         _isRecording = newState == RobotUiState.listening;
       });
-    });
+    }
+
+    _robotController.state.addListener(syncUiState);
+    _robotController.isBackendReachable.addListener(syncUiState);
 
     _robotController.startPolling();
   }
@@ -229,6 +235,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
             ),
             onPressed: () async {
               await ApiConfig.setBaseUrl(ctrl.text.trim());
+              await _robotController.refreshBackendStatus();
               if (ctx.mounted) Navigator.of(ctx).pop();
             },
             child: const Text(
