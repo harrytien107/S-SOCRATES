@@ -38,6 +38,12 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+Tạo file `.env` từ mẫu:
+
+```powershell
+copy .env.example .env
+```
+
 ## Chạy backend
 
 ```powershell
@@ -66,10 +72,59 @@ Docs: `http://localhost:8000/docs`
 
 Tùy cấu hình service, bạn có thể cần:
 - `DEEPGRAM_API_KEY`
-- Các biến liên quan TTS/LLM (nếu áp dụng theo môi trường của bạn)
+- `GEMINI_API_KEY`
+
+### Local LLM: chọn `ollama` hoặc `turboquant`
+
+Backend local chỉ có 2 lựa chọn qua `.env`:
+
+- `LOCAL_LLM_BACKEND=ollama`
+- `LOCAL_LLM_BACKEND=turboquant`
+
+Khi backend FastAPI khởi động:
+
+- app sẽ kiểm tra local engine đã sẵn sàng chưa
+- nếu chưa sẵn sàng và `LOCAL_LLM_AUTOSTART=1`, app sẽ tự khởi động engine local đã chọn
+- khi backend tắt, app chỉ dừng process local mà chính app đã start
+- app không kill service ngoài hệ thống, nhờ đó an toàn hơn khi máy còn tiến trình khác
+
+### Ví dụ cấu hình Ollama
+
+```env
+LOCAL_LLM_BACKEND=ollama
+LOCAL_LLM_AUTOSTART=1
+LOCAL_LLM_HOST=127.0.0.1
+LOCAL_LLM_PORT=11434
+LOCAL_LLM_TIMEOUT_S=120
+OLLAMA_CMD=ollama
+OLLAMA_MODEL_NAME=qwen2:7b
+```
+
+### Ví dụ cấu hình TurboQuant
+
+```env
+LOCAL_LLM_BACKEND=turboquant
+LOCAL_LLM_AUTOSTART=1
+LOCAL_LLM_HOST=127.0.0.1
+LOCAL_LLM_PORT=8011
+LOCAL_LLM_TIMEOUT_S=120
+LOCAL_LLM_MODEL_NAME=Qwen3.5-4b-finetuned-opinion.Q4_K_M.gguf
+LOCAL_LLM_GGUF_PATH=/home/your-user/models/Qwen3.5-4b-finetuned-opinion.Q4_K_M.gguf
+TURBOQUANT_SERVER_BIN=/home/your-user/llama-cpp-turboquant-cuda/build-cuda-kv/bin/llama-server
+TURBOQUANT_CACHE_TYPE=turbo2
+TURBOQUANT_NGL=99
+TURBOQUANT_CTX=8192
+```
+
+Lưu ý:
+
+- Gemini giữ nguyên luồng cũ và không phụ thuộc local backend.
+- `model_choice="ollama"` trong code hiện tại vẫn được giữ nguyên để tương thích API, nhưng thực tế nó sẽ route sang local backend đã chọn trong `.env`.
+- Với TurboQuant, backend không tải lại model; nó dùng trực tiếp file GGUF đã có sẵn tại `LOCAL_LLM_GGUF_PATH`.
 
 ## Troubleshooting
 
 - Timeout khi polling: kiểm tra backend có đang xử lý request nặng.
 - Không có transcript: kiểm tra audio format, key STT, và log backend.
 - Không phát tiếng: kiểm tra TTS service và đường trả audio.
+- Local backend không lên: kiểm tra `LOCAL_LLM_BACKEND`, port, binary/path model GGUF, và log startup của FastAPI.
