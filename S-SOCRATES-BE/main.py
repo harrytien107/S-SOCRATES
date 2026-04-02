@@ -2,14 +2,23 @@ import time
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
 from dotenv import load_dotenv
+
+load_dotenv()
 
 from services.stt_service import process_stt_request
 from services.chat_orchestrator import process_chat_message
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
 from services.semantic_router import semantic_router
-from services.llm_service import ask_socrates, switch_gemini_model, AVAILABLE_GEMINI_MODELS
+from services.llm_service import (
+    AVAILABLE_GEMINI_MODELS,
+    ask_socrates,
+    get_local_backend_status,
+    initialize_local_backend,
+    shutdown_local_backend,
+    switch_gemini_model,
+)
+from utils.logger import log
 
 # =========================
 # FastAPI Configuration
@@ -23,8 +32,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-load_dotenv()
 
 # =========================
 # Input Models
@@ -66,6 +73,19 @@ GLOBAL_AUDIO_CONFIG = {
     "stt_language": "vi",
     "gemini_model": "models/gemini-2.0-flash",
 }
+
+
+@app.on_event("startup")
+async def startup_local_llm():
+    try:
+        initialize_local_backend()
+    except Exception as e:
+        log.warning(f"⚠️ Local LLM backend startup skipped: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_local_llm():
+    shutdown_local_backend()
 
 # Remote Mic Control – Cột đèn giao thông giữa Operator và App
 # idle = ngủ, listening = đang thu âm, processing = đang xử lý STT
@@ -114,8 +134,10 @@ async def list_vi_voices():
 
 @app.get("/configs")
 async def get_configs():
+    local_backend = get_local_backend_status()
     return {
         "config": GLOBAL_AUDIO_CONFIG,
+        "local_llm": local_backend,
         "available_voices": CHIRP3_HD_VOICES,
         "available_stt_models": ["nova-2", "nova-2-general", "whisper-large"],
         "available_stt_languages": [
@@ -227,7 +249,7 @@ async def operator_decision(req: DecisionRequest):
         text = req.selected_answer
         emotion = "speaking"
     elif req.mode == "ai":
-        # Using Ollama (Local LLM) through ask_socrates
+        # Using selected local LLM backend (Ollama or TurboQuant) through ask_socrates
         text = ask_socrates(req.transcript, model_choice="ollama")
         emotion = "challenge"
     elif req.mode == "gemini":
