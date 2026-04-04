@@ -19,9 +19,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from services.chat_orchestrator import process_chat_message
 from services.llm_service import (
     AVAILABLE_GEMINI_MODELS,
-    ask_socrates,
     get_local_backend_status,
     initialize_local_backend,
     shutdown_local_backend,
@@ -370,17 +370,29 @@ async def operator_decision(req: DecisionRequest):
     text = ""
     emotion = "neutral"
 
-    if req.mode == "preset":
-        text = req.selected_answer or ""
-        emotion = "speaking"
-    elif req.mode == "ai":
-        text = ask_socrates(req.transcript or "", model_choice="ollama")
-        emotion = "speaking"
-    elif req.mode == "gemini":
-        text = ask_socrates(req.transcript or "", model_choice="gemini")
-        emotion = "speaking"
-    else:
-        return {"error": "Invalid mode"}
+    try:
+        if req.mode == "preset":
+            text = req.selected_answer or ""
+            emotion = "speaking"
+        elif req.mode == "ai":
+            text = await run_in_threadpool(
+                process_chat_message,
+                req.transcript or "",
+                "ollama",
+            )
+            emotion = "speaking"
+        elif req.mode == "gemini":
+            text = await run_in_threadpool(
+                process_chat_message,
+                req.transcript or "",
+                "gemini",
+            )
+            emotion = "speaking"
+        else:
+            return {"error": "Invalid mode"}
+    except Exception as e:
+        log.error("operator_decision failed for mode=%s: %s", req.mode, e)
+        return {"error": str(e)}
 
     return {
         "text": text,

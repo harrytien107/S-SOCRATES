@@ -15,9 +15,9 @@ from llama_index.llms.ollama import Ollama
 
 from utils.logger import log
 
-load_dotenv()
-
 BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_PATH = BASE_DIR / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 KNOWLEDGE_DIR = BASE_DIR / "knowledge"
 PROMPT_PATH = KNOWLEDGE_DIR / "uth.txt"
 
@@ -169,7 +169,7 @@ def _build_local_query_engine(config: LocalLLMConfig):
 def _start_ollama_process(config: LocalLLMConfig) -> subprocess.Popen:
     cmd = [config.ollama_cmd, "serve"]
     log.info(
-        "🚀 Starting Ollama local backend at %s using model %s",
+        "Starting Ollama local backend at %s using model %s",
         config.api_base,
         config.ollama_model_name,
     )
@@ -214,7 +214,7 @@ def _start_turboquant_process(config: LocalLLMConfig) -> subprocess.Popen:
         "--jinja",
     ]
     log.info(
-        "🚀 Starting TurboQuant local backend at %s using model %s",
+        "Starting TurboQuant local backend at %s using model %s",
         config.api_base,
         config.gguf_path,
     )
@@ -254,7 +254,7 @@ def shutdown_local_backend() -> None:
         if process is None:
             return
 
-        log.info("🧹 Stopping app-managed local backend %s", backend)
+        log.info("Stopping app-managed local backend %s", backend)
         try:
             process.terminate()
             process.wait(timeout=10)
@@ -284,7 +284,7 @@ def initialize_local_backend(force_restart: bool = False) -> None:
 
         if _is_backend_ready(config):
             log.info(
-                "✅ Reusing existing %s local backend at %s (model=%s)",
+                "Reusing existing %s local backend at %s (model=%s)",
                 config.backend,
                 config.api_base,
                 config.model_name if config.backend == "turboquant" else config.ollama_model_name,
@@ -318,7 +318,7 @@ def initialize_local_backend(force_restart: bool = False) -> None:
         _local_query_engine = _build_local_query_engine(config)
         _local_backend_name = config.backend
         log.info(
-            "✅ Local backend ready: backend=%s host=%s port=%s model=%s gguf=%s",
+            "Local backend ready: backend=%s host=%s port=%s model=%s gguf=%s",
             config.backend,
             config.host,
             config.port,
@@ -381,9 +381,9 @@ def _init_gemini_engine(model_name: str = "models/gemini-2.5-flash"):
         )
         _gemini_engine = _index.as_query_engine(llm=llm)
         _current_gemini_model = model_name
-        log.info(f"✅ Gemini Query Engine ({model_name}) initialized.")
+        log.info("Gemini Query Engine (%s) initialized.", model_name)
     except Exception as exc:
-        log.error(f"❌ Failed to initialize Gemini engine: {exc}")
+        log.error("Failed to initialize Gemini engine: %s", exc)
         _gemini_engine = None
 
 
@@ -394,7 +394,7 @@ def switch_gemini_model(model_name: str):
     global _current_gemini_model
     if model_name == _current_gemini_model:
         return
-    log.info(f"🔄 Switching Gemini model: {_current_gemini_model} → {model_name}")
+    log.info("Switching Gemini model: %s -> %s", _current_gemini_model, model_name)
     _init_gemini_engine(model_name)
 
 
@@ -412,18 +412,33 @@ Câu hỏi hiện tại:
 
     if model_choice == "gemini":
         if _gemini_engine is None:
-            log.error("Gemini engine is not available. Falling back to local backend.")
-            response = _get_local_query_engine().query(prompt)
+            raise RuntimeError(
+                "Gemini engine is not available. "
+                "Please verify GEMINI_API_KEY and the selected Gemini model."
+            )
         else:
-            log.info(f"🧠 Routing to Gemini (Cloud) [{_current_gemini_model}]...")
-            response = _gemini_engine.query(prompt)
+            log.info("Routing to Gemini (Cloud) [%s]...", _current_gemini_model)
+            try:
+                response = _gemini_engine.query(prompt)
+            except Exception as exc:
+                error_type = exc.__class__.__name__
+                error_text = str(exc)
+                if error_type == "ResourceExhausted" or "RESOURCE_EXHAUSTED" in error_text:
+                    raise RuntimeError(
+                        "Gemini quota exceeded for the current API key/project. "
+                        "Please wait and retry, or switch to the local model."
+                    ) from exc
+                raise RuntimeError(f"Gemini request failed: {error_text}") from exc
     else:
         local_status = get_local_backend_status()
         log.info(
-            "🧠 Routing to local backend (%s) at %s...",
+            "Routing to local backend (%s) at %s...",
             local_status["backend"],
             local_status["api_base"],
         )
-        response = _get_local_query_engine().query(prompt)
+        try:
+            response = _get_local_query_engine().query(prompt)
+        except Exception as exc:
+            raise RuntimeError(f"Local model request failed: {exc}") from exc
 
     return str(response)
