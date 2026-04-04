@@ -1,53 +1,439 @@
 import os
-from llama_index.core import VectorStoreIndex, SimpleDirectoryReader
-from llama_index.llms.ollama import Ollama
+import re
+import subprocess
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+from urllib import request
+
+from dotenv import load_dotenv
+from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
 from llama_index.core.settings import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.llms.ollama import Ollama
+
 from utils.logger import log
 
-# =========================
-# S-Socrates Prompt
-# =========================
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_PATH = BASE_DIR / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
+KNOWLEDGE_DIR = BASE_DIR / "knowledge"
+PROMPT_PATH = KNOWLEDGE_DIR / "uth.txt"
 
-import os
 
-_prompt_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "knowledge", "uth.txt")
+def _read_bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+GEMINI_TIMEOUT_S = float(os.getenv("GEMINI_TIMEOUT_S", "12"))
+GEMINI_FALLBACK_LOCAL_ON_TIMEOUT = _read_bool_env(
+    "GEMINI_FALLBACK_LOCAL_ON_TIMEOUT", False
+)
+GEMINI_FALLBACK_LOCAL_ON_QUOTA = _read_bool_env(
+    "GEMINI_FALLBACK_LOCAL_ON_QUOTA", False
+)
+_gemini_timeout_executor = ThreadPoolExecutor(max_workers=2)
+STRICT_PROMPT_MODE = _read_bool_env("STRICT_PROMPT_MODE", True)
+STRICT_MAX_SENTENCES = int(os.getenv("STRICT_MAX_SENTENCES", "3"))
+STRICT_MAX_WORDS = int(os.getenv("STRICT_MAX_WORDS", "60"))
+STRICT_FORCE_POLITE_PREFIX = _read_bool_env("STRICT_FORCE_POLITE_PREFIX", True)
+GEMINI_USE_RETRIEVAL = _read_bool_env("GEMINI_USE_RETRIEVAL", False)
+
+STRICT_GEMINI_SUFFIX = """
+YEU CAU BAT BUOC BAM PROMPT:
+- Tuân thủ tuyệt đối PERSONA + OUTPUT RULES trong SYSTEM_PROMPT.
+- Luôn xưng 'em', xưng hô lễ phép với 'Giáo sư' hoặc 'Tiến sĩ'.
+- Không trả lời kiểu "không có dữ liệu" cho các chủ đề kiến thức phổ thông.
+"""
+
+
+def _http_ready(url: str, timeout: float) -> bool:
+    try:
+        req = request.Request(url, method="GET")
+        with request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 500
+    except Exception:
+        return False
+
+
+def _wait_until_ready(checker, timeout_s: float, interval_s: float = 0.5) -> bool:
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        if checker():
+            return True
+        time.sleep(interval_s)
+    return checker()
+
+
+def _normalize_whitespace(text: str) -> str:
+    return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _truncate_sentences(text: str, max_sentences: int) -> str:
+    if max_sentences <= 0:
+        return text
+    segments = [s.strip() for s in re.split(r"(?<=[.!?…])\s+", text) if s.strip()]
+    if len(segments) <= max_sentences:
+        return " ".join(segments)
+    return " ".join(segments[:max_sentences])
+
+
+def _truncate_words(text: str, max_words: int) -> str:
+    if max_words <= 0:
+        return text
+    words = text.split()
+    if len(words) <= max_words:
+        return text
+    shortened = " ".join(words[:max_words]).rstrip(" ,;:")
+    if shortened and shortened[-1] not in ".!?":
+        shortened += "."
+    return shortened
+
+
+def _enforce_socrates_style(text: str) -> str:
+    cleaned = _normalize_whitespace(text)
+    cleaned = cleaned.replace("S-Socrates:", "").strip()
+
+    if not cleaned:
+        return "Thưa Giáo sư, em xin lỗi, em chưa xử lý được câu hỏi này ạ."
+
+    if STRICT_PROMPT_MODE:
+        cleaned = _truncate_sentences(cleaned, max(1, STRICT_MAX_SENTENCES))
+        cleaned = _truncate_words(cleaned, max(20, STRICT_MAX_WORDS))
+
+    if STRICT_FORCE_POLITE_PREFIX and not re.match(r"^(thưa|kính thưa|thua|kinh thua)\s", cleaned, re.IGNORECASE):
+        cleaned = f"Thưa Giáo sư, {cleaned}"
+
+    cleaned = cleaned.strip()
+    if cleaned and cleaned[-1] not in ".!?":
+        cleaned += "."
+    return cleaned
+
+
+def _extract_response_text(response_obj) -> str:
+    if response_obj is None:
+        return ""
+    text_attr = getattr(response_obj, "text", None)
+    if text_attr is not None:
+        return str(text_attr)
+    return str(response_obj)
+
+
 try:
-    with open(_prompt_path, "r", encoding="utf-8") as _f:
-        SYSTEM_PROMPT = _f.read().strip()
-except Exception as e:
-    print(f"⚠️ Không thể tải cấu hình system prompt từ {_prompt_path}: {e}")
+    SYSTEM_PROMPT = PROMPT_PATH.read_text(encoding="utf-8").strip()
+except Exception as exc:
+    print(f"⚠️ Không thể tải cấu hình system prompt từ {PROMPT_PATH}: {exc}")
     SYSTEM_PROMPT = "Bạn là S-SOCRATES, một AI phản biện."
 
+
+@dataclass(frozen=True)
+class LocalLLMConfig:
+    backend: str
+    autostart: bool
+    timeout_s: float
+    host: str
+    port: int
+    model_name: str
+    gguf_path: str
+    ollama_cmd: str
+    ollama_model_name: str
+    turboquant_server_bin: str
+    turboquant_cache_type: str
+    turboquant_ngl: int
+    turboquant_ctx: int
+
+    @property
+    def health_url(self) -> str:
+        if self.backend == "ollama":
+            return f"http://{self.host}:{self.port}/api/tags"
+        return f"http://{self.host}:{self.port}/health"
+
+    @property
+    def api_base(self) -> str:
+        if self.backend == "ollama":
+            return f"http://{self.host}:{self.port}"
+        return f"http://{self.host}:{self.port}/v1"
+
+
+def _load_local_config() -> LocalLLMConfig:
+    backend = os.getenv("LOCAL_LLM_BACKEND", "ollama").strip().lower()
+    if backend not in {"ollama", "turboquant"}:
+        raise ValueError(
+            "LOCAL_LLM_BACKEND phải là 'ollama' hoặc 'turboquant'."
+        )
+
+    default_port = 11434 if backend == "ollama" else 8011
+    return LocalLLMConfig(
+        backend=backend,
+        autostart=_read_bool_env("LOCAL_LLM_AUTOSTART", True),
+        timeout_s=float(os.getenv("LOCAL_LLM_TIMEOUT_S", "120")),
+        host=os.getenv("LOCAL_LLM_HOST", "127.0.0.1"),
+        port=int(os.getenv("LOCAL_LLM_PORT", str(default_port))),
+        model_name=os.getenv(
+            "LOCAL_LLM_MODEL_NAME",
+            os.getenv("OLLAMA_MODEL_NAME", "qwen2:7b"),
+        ),
+        gguf_path=os.getenv("LOCAL_LLM_GGUF_PATH", "").strip(),
+        ollama_cmd=os.getenv("OLLAMA_CMD", "ollama").strip(),
+        ollama_model_name=os.getenv("OLLAMA_MODEL_NAME", "qwen2:7b").strip(),
+        turboquant_server_bin=os.getenv("TURBOQUANT_SERVER_BIN", "").strip(),
+        turboquant_cache_type=os.getenv("TURBOQUANT_CACHE_TYPE", "turbo2").strip(),
+        turboquant_ngl=int(os.getenv("TURBOQUANT_NGL", "99")),
+        turboquant_ctx=int(os.getenv("TURBOQUANT_CTX", "8192")),
+    )
+
+
 # =========================
-# Init Service Components
+# Shared Retrieval Components
 # =========================
 
-# Shared embedding model (dùng chung cho cả 2 engine)
 _embed_model = HuggingFaceEmbedding(
     model_name="sentence-transformers/all-MiniLM-L6-v2"
 )
-
-# Shared vector index (cả Ollama và Gemini đều đọc chung kho tri thức)
 Settings.embed_model = _embed_model
-_documents = SimpleDirectoryReader("knowledge").load_data()
+_documents = SimpleDirectoryReader(str(KNOWLEDGE_DIR)).load_data()
 _index = VectorStoreIndex.from_documents(_documents)
 
 
-# --- Engine 1: Ollama (Local) ---
-def _init_ollama_engine():
-    llm = Ollama(
-        model="qwen2:7b",
-        request_timeout=120.0
+# =========================
+# Local Engine Runtime State
+# =========================
+
+_runtime_lock = threading.RLock()
+_local_query_engine = None
+_local_backend_name = None
+_managed_local_process: Optional[subprocess.Popen] = None
+_managed_local_backend: Optional[str] = None
+_managed_local_command = None
+
+
+def _build_local_query_engine(config: LocalLLMConfig):
+    if config.backend == "ollama":
+        llm = Ollama(
+            model=config.ollama_model_name,
+            request_timeout=config.timeout_s,
+            base_url=config.api_base,
+        )
+        return _index.as_query_engine(llm=llm)
+
+    try:
+        from llama_index.llms.openai_like import OpenAILike
+    except ImportError as exc:
+        raise RuntimeError(
+            "Thiếu package llama-index-llms-openai-like. "
+            "Hãy chạy `pip install -r requirements.txt`."
+        ) from exc
+
+    llm = OpenAILike(
+        model=config.model_name,
+        api_base=config.api_base,
+        api_key="not-needed",
+        context_window=config.turboquant_ctx,
+        is_chat_model=True,
+        is_function_calling_model=False,
+        timeout=config.timeout_s,
+        max_tokens=1024,
+        temperature=0.2,
     )
     return _index.as_query_engine(llm=llm)
 
-_ollama_engine = _init_ollama_engine()
-log.info("✅ Ollama Query Engine (Qwen2:7b) initialized.")
+
+def _start_ollama_process(config: LocalLLMConfig) -> subprocess.Popen:
+    cmd = [config.ollama_cmd, "serve"]
+    log.info(
+        "🚀 Starting Ollama local backend at %s using model %s",
+        config.api_base,
+        config.ollama_model_name,
+    )
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(BASE_DIR),
+    )
 
 
-# --- Engine 2: Gemini (Cloud) - Dynamic Model ---
+def _start_turboquant_process(config: LocalLLMConfig) -> subprocess.Popen:
+    if not config.turboquant_server_bin:
+        raise RuntimeError("TURBOQUANT_SERVER_BIN chưa được cấu hình.")
+    if not config.gguf_path:
+        raise RuntimeError("LOCAL_LLM_GGUF_PATH chưa được cấu hình cho turboquant.")
+    if not Path(config.turboquant_server_bin).exists():
+        raise RuntimeError(
+            f"Không tìm thấy binary llama-server tại {config.turboquant_server_bin}"
+        )
+    if not Path(config.gguf_path).exists():
+        raise RuntimeError(f"Không tìm thấy model GGUF tại {config.gguf_path}")
+
+    cmd = [
+        config.turboquant_server_bin,
+        "--host",
+        config.host,
+        "--port",
+        str(config.port),
+        "-m",
+        config.gguf_path,
+        "-ngl",
+        str(config.turboquant_ngl),
+        "-c",
+        str(config.turboquant_ctx),
+        "--flash-attn",
+        "on",
+        "--cache-type-k",
+        config.turboquant_cache_type,
+        "--cache-type-v",
+        config.turboquant_cache_type,
+        "--jinja",
+    ]
+    log.info(
+        "🚀 Starting TurboQuant local backend at %s using model %s",
+        config.api_base,
+        config.gguf_path,
+    )
+    return subprocess.Popen(
+        cmd,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        cwd=str(BASE_DIR),
+    )
+
+
+def _start_local_process(config: LocalLLMConfig) -> subprocess.Popen:
+    if config.backend == "ollama":
+        return _start_ollama_process(config)
+    return _start_turboquant_process(config)
+
+
+def _is_backend_ready(config: LocalLLMConfig) -> bool:
+    return _http_ready(config.health_url, timeout=min(config.timeout_s, 5.0))
+
+
+def shutdown_local_backend() -> None:
+    global _local_query_engine, _local_backend_name
+    global _managed_local_process, _managed_local_backend, _managed_local_command
+
+    with _runtime_lock:
+        process = _managed_local_process
+        backend = _managed_local_backend
+        command = _managed_local_command
+
+        _local_query_engine = None
+        _local_backend_name = None
+        _managed_local_process = None
+        _managed_local_backend = None
+        _managed_local_command = None
+
+        if process is None:
+            return
+
+        log.info("🧹 Stopping app-managed local backend %s", backend)
+        try:
+            process.terminate()
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            log.warning("⚠️ Local backend did not stop in time, killing it.")
+            process.kill()
+            process.wait(timeout=5)
+        except Exception as exc:
+            log.error("❌ Failed to stop local backend %s (%s): %s", backend, command, exc)
+
+
+def initialize_local_backend(force_restart: bool = False) -> None:
+    global _local_query_engine, _local_backend_name
+    global _managed_local_process, _managed_local_backend, _managed_local_command
+
+    config = _load_local_config()
+    with _runtime_lock:
+        if force_restart:
+            shutdown_local_backend()
+        elif (
+            _local_query_engine is not None
+            and _local_backend_name == config.backend
+        ):
+            return
+        elif _managed_local_process is not None and _managed_local_backend != config.backend:
+            shutdown_local_backend()
+
+        if _is_backend_ready(config):
+            log.info(
+                "✅ Reusing existing %s local backend at %s (model=%s)",
+                config.backend,
+                config.api_base,
+                config.model_name if config.backend == "turboquant" else config.ollama_model_name,
+            )
+            _local_query_engine = _build_local_query_engine(config)
+            _local_backend_name = config.backend
+            return
+
+        if not config.autostart:
+            raise RuntimeError(
+                f"Local backend '{config.backend}' chưa sẵn sàng tại {config.api_base} "
+                "và LOCAL_LLM_AUTOSTART=0."
+            )
+
+        shutdown_local_backend()
+        process = _start_local_process(config)
+        _managed_local_process = process
+        _managed_local_backend = config.backend
+        _managed_local_command = process.args
+
+        ready = _wait_until_ready(
+            lambda: _is_backend_ready(config),
+            timeout_s=min(max(config.timeout_s, 30.0), 180.0),
+        )
+        if not ready:
+            shutdown_local_backend()
+            raise RuntimeError(
+                f"Local backend '{config.backend}' không sẵn sàng tại {config.api_base}."
+            )
+
+        _local_query_engine = _build_local_query_engine(config)
+        _local_backend_name = config.backend
+        log.info(
+            "✅ Local backend ready: backend=%s host=%s port=%s model=%s gguf=%s",
+            config.backend,
+            config.host,
+            config.port,
+            config.model_name if config.backend == "turboquant" else config.ollama_model_name,
+            config.gguf_path or "-",
+        )
+
+
+def _get_local_query_engine():
+    with _runtime_lock:
+        if _local_query_engine is None:
+            initialize_local_backend()
+        return _local_query_engine
+
+
+def get_local_backend_status() -> dict:
+    config = _load_local_config()
+    with _runtime_lock:
+        return {
+            "backend": config.backend,
+            "host": config.host,
+            "port": config.port,
+            "api_base": config.api_base,
+            "model_name": config.model_name if config.backend == "turboquant" else config.ollama_model_name,
+            "gguf_path": config.gguf_path or None,
+            "autostart": config.autostart,
+            "ready": _is_backend_ready(config),
+            "managed_by_app": _managed_local_process is not None,
+        }
+
+
+# =========================
+# Gemini (Cloud) - Dynamic Model
+# =========================
+
 _gemini_engine = None
+_gemini_llm = None
 _current_gemini_model = None
 
 AVAILABLE_GEMINI_MODELS = [
@@ -59,35 +445,73 @@ AVAILABLE_GEMINI_MODELS = [
 ]
 
 def _init_gemini_engine(model_name: str = "models/gemini-2.5-flash"):
-    global _gemini_engine, _current_gemini_model
+    global _gemini_engine, _gemini_llm, _current_gemini_model
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key:
         log.warning("⚠️ GEMINI_API_KEY not found in .env. Gemini engine disabled.")
+        _gemini_engine = None
+        _gemini_llm = None
         return
 
     try:
         from llama_index.llms.gemini import Gemini
+
         llm = Gemini(
             model=model_name,
             api_key=api_key,
         )
+        _gemini_llm = llm
         _gemini_engine = _index.as_query_engine(llm=llm)
         _current_gemini_model = model_name
-        log.info(f"✅ Gemini Query Engine ({model_name}) initialized.")
-    except Exception as e:
-        log.error(f"❌ Failed to initialize Gemini engine: {e}")
+        log.info(
+            "✅ Gemini initialized (%s). retrieval=%s",
+            model_name,
+            GEMINI_USE_RETRIEVAL,
+        )
+    except Exception as exc:
+        log.error(f"❌ Failed to initialize Gemini engine: {exc}")
         _gemini_engine = None
+        _gemini_llm = None
+
 
 _init_gemini_engine()
 
 
 def switch_gemini_model(model_name: str):
-    """Hot-swap Gemini model tại runtime. Gọi từ API /configs."""
     global _current_gemini_model
     if model_name == _current_gemini_model:
-        return  # Không cần khởi tạo lại nếu cùng model
+        return
     log.info(f"🔄 Switching Gemini model: {_current_gemini_model} → {model_name}")
     _init_gemini_engine(model_name)
+
+
+def _query_gemini_with_timeout(prompt: str):
+    if GEMINI_USE_RETRIEVAL:
+        if _gemini_engine is None:
+            raise RuntimeError("Gemini query engine is not initialized")
+        query_fn = _gemini_engine.query
+    else:
+        if _gemini_llm is None:
+            raise RuntimeError("Gemini LLM is not initialized")
+        query_fn = _gemini_llm.complete
+
+    if GEMINI_TIMEOUT_S <= 0:
+        return query_fn(prompt)
+
+    future = _gemini_timeout_executor.submit(query_fn, prompt)
+    try:
+        return future.result(timeout=GEMINI_TIMEOUT_S)
+    except FuturesTimeoutError as exc:
+        future.cancel()
+        if GEMINI_FALLBACK_LOCAL_ON_TIMEOUT:
+            log.warning(
+                "⏱️ Gemini timeout after %.1fs, fallback to local backend.",
+                GEMINI_TIMEOUT_S,
+            )
+            return _get_local_query_engine().query(prompt)
+        raise RuntimeError(
+            f"Gemini timed out after {GEMINI_TIMEOUT_S:.1f}s."
+        ) from exc
 
 
 # =========================
@@ -95,27 +519,62 @@ def switch_gemini_model(model_name: str):
 # =========================
 
 def ask_socrates(user_message: str, history_context: str = "", model_choice: str = "ollama") -> str:
-    """
-    Hỏi S-Socrates. 
-    model_choice: "ollama" (default, local) hoặc "gemini" (cloud).
-    Cả hai đều đọc chung kho tri thức knowledge/.
-    """
-    prompt = f"""{SYSTEM_PROMPT}
+    base_prompt = f"""{SYSTEM_PROMPT}
 
 {history_context}
 Câu hỏi hiện tại:
 {user_message}
 """
-    
+
+    if model_choice == "gemini":
+        prompt = (
+            base_prompt
+            + "\n"
+            + STRICT_GEMINI_SUFFIX
+        )
+    else:
+        prompt = base_prompt
+
     if model_choice == "gemini":
         if _gemini_engine is None:
-            log.error("Gemini engine is not available. Falling back to Ollama.")
-            response = _ollama_engine.query(prompt)
+            raise RuntimeError(
+                "Gemini engine is not available. "
+                "Please verify GEMINI_API_KEY and the selected Gemini model."
+            )
         else:
             log.info(f"🧠 Routing to Gemini (Cloud) [{_current_gemini_model}]...")
-            response = _gemini_engine.query(prompt)
+            try:
+                response = _query_gemini_with_timeout(prompt)
+            except Exception as exc:
+                error_type = exc.__class__.__name__
+                error_text = str(exc)
+                if error_type == "ResourceExhausted" or "RESOURCE_EXHAUSTED" in error_text:
+                    if GEMINI_FALLBACK_LOCAL_ON_QUOTA:
+                        log.warning(
+                            "Gemini quota exhausted, falling back to local backend while keeping strict output formatting."
+                        )
+                        try:
+                            response = _get_local_query_engine().query(base_prompt)
+                        except Exception as local_exc:
+                            raise RuntimeError(
+                                f"Gemini quota exceeded and local fallback failed: {local_exc}"
+                            ) from local_exc
+                        return _enforce_socrates_style(_extract_response_text(response))
+                    raise RuntimeError(
+                        "Gemini quota exceeded for the current API key/project. "
+                        "Please wait and retry, or switch to AI mode to use local backend."
+                    ) from exc
+                raise RuntimeError(f"Gemini request failed: {error_text}") from exc
     else:
-        log.info("🧠 Routing to Ollama (Local)...")
-        response = _ollama_engine.query(prompt)
-    
-    return str(response)
+        local_status = get_local_backend_status()
+        log.info(
+            "🧠 Routing to local backend (%s) at %s...",
+            local_status["backend"],
+            local_status["api_base"],
+        )
+        try:
+            response = _get_local_query_engine().query(prompt)
+        except Exception as exc:
+            raise RuntimeError(f"Local model request failed: {exc}") from exc
+
+    return _enforce_socrates_style(_extract_response_text(response))

@@ -89,7 +89,7 @@
             <div class="scroll-area" style="display: flex; flex-direction: column;">
                 <div class="preview-header">
                     <div class="label" style="font-size: 0.7rem; color: var(--text-dim);">FINAL SCRIPT PREVIEW</div>
-                    <button class="settings-btn" id="expand-preview-btn" onclick="togglePreviewModal(true)">⤢ EXPAND</button>
+                    <button class="settings-btn" id="expand-preview-btn" onclick="togglePreviewExpand()">⤢ EXPAND</button>
                 </div>
                 <div class="preview-area fixed-preview" id="final-preview" contenteditable="false"></div>
 
@@ -111,9 +111,9 @@
                 
                 <div class="panel-header" style="margin-top: 1rem; padding: 4px 0; border: none; font-size: 0.65rem; display: flex; justify-content: space-between; align-items: center;">
                     System Logs
-                    <button class="settings-btn" id="expand-log-btn" onclick="toggleLogExpand()" style="font-size: 0.6rem; padding: 2px 8px;">⤢ EXPAND</button>
+                    <button class="settings-btn" id="expand-log-btn" onclick="toggleLogExpand()" style="font-size: 0.6rem; padding: 2px 8px;">⤡ COLLAPSE</button>
                 </div>
-                <div id="log-container" class="log-panel"></div>
+                <div id="log-container" class="log-panel log-expanded" style="min-height: 300px; max-height: 500px;"></div>
             </div>
         </section>
     </main>
@@ -200,25 +200,14 @@
                         <option value="models/gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Mới nhất)</option>
                         <option value="models/gemini-3-flash-preview">Gemini 3.0 Flash Preview</option>
                         <option value="models/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                        <option value="models/gemini-2.5-flash" selected>Gemini 2.5 Flash</option>
-                        <option value="models/gemini-2.0-flash">Gemini 2.0 Flash (Nhanh nhất)</option>
+                        <option value="models/gemini-2.5-flash">Gemini 2.5 Flash</option>
+                        <option value="models/gemini-2.0-flash" selected>Gemini 2.0 Flash (Nhanh nhất)</option>
                         <option value="models/gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Nhẹ)</option>
                     </select>
                 </div>
             </div>
 
             <button class="ai-reflex-btn" onclick="saveSettings()" style="background: var(--cyan); color: var(--bg-deep); margin-top: 1rem;">💾 SAVE & RECONNECT</button>
-        </div>
-    </div>
-
-    <!-- Preview Modal -->
-    <div class="modal" id="preview-modal">
-        <div class="modal-content preview-modal-content">
-            <div class="modal-header">
-                <h2 style="margin: 0; color: var(--cyan);">FINAL SCRIPT PREVIEW</h2>
-                <button class="settings-btn" onclick="togglePreviewModal(false)">✕</button>
-            </div>
-            <div class="preview-area preview-area-expanded" id="final-preview-expanded"></div>
         </div>
     </div>
 

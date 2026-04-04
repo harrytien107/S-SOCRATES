@@ -184,6 +184,11 @@ main {
     white-space: pre-wrap;
     word-break: break-word;
 }
+.fixed-preview.preview-expanded-inline {
+    min-height: 260px;
+    max-height: none;
+    transition: height 0.18s ease, min-height 0.18s ease, max-height 0.18s ease;
+}
 .preview-modal-content {
     width: min(920px, 92vw);
     max-height: 86vh;
@@ -228,6 +233,10 @@ main {
     padding: 8px;
     display: flex;
     flex-direction: column;
+}
+.log-panel.log-expanded {
+    min-height: 300px;
+    max-height: 500px;
 }
 
 .log-entry {

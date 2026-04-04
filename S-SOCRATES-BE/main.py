@@ -1,24 +1,33 @@
 import time
 import json
 import base64
+from pathlib import Path
 from fastapi import FastAPI, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
 import os
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import Optional
 from dotenv import load_dotenv
-load_dotenv()  # Phải load TRƯỚC khi import services (vì llm_service đọc env lúc khởi tạo)
+ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)  # Phải load TRƯỚC khi import services (vì llm_service đọc env lúc khởi tạo)
 
 from services.stt_service import process_stt_request
 from services.chat_orchestrator import process_chat_message
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
 from services.semantic_router import semantic_router
-from services.llm_service import ask_socrates, switch_gemini_model, AVAILABLE_GEMINI_MODELS
+from services.llm_service import (
+    AVAILABLE_GEMINI_MODELS,
+    get_local_backend_status,
+    initialize_local_backend,
+    shutdown_local_backend,
+    switch_gemini_model,
+)
 from services.memory_service import memory_service
 from services.streaming_stt_service import StreamingSTTSession
 from services.streaming_tts_service import synthesize_sentence, split_into_sentences
 from services.llm_streaming_service import stream_gemini_sentences
+from utils.logger import log
 
 # =========================
 # FastAPI Configuration
@@ -36,8 +45,6 @@ app.add_middleware(
 # Thống nhất thư mục Operator-UI để Serve Frontend qua FastAPI
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ui_dir = os.path.join(BASE_DIR, "operator-ui")
-if os.path.exists(ui_dir):
-    app.mount("/operator", StaticFiles(directory=ui_dir, html=True), name="operator")
 
 class ConnectionManager:
     def __init__(self):
@@ -60,7 +67,6 @@ class ConnectionManager:
 
 ws_manager = ConnectionManager()       # Operator Web UI
 robot_ws_manager = ConnectionManager()  # Robot Flutter App
-
 # =========================
 # Input Models
 # =========================
@@ -69,8 +75,8 @@ class ChatRequest(BaseModel):
 
 class DecisionRequest(BaseModel):
     mode: str  # "preset", "ai" (Ollama), or "gemini"
-    selected_answer: str = None
-    transcript: str = None
+    selected_answer: str | None = None
+    transcript: str | None = None
 
 class TTSRequest(BaseModel):
     text: str
@@ -85,7 +91,9 @@ class AudioConfigRequest(BaseModel):
     tts_speed: float = 1.0
     stt_model: str = "nova-2"
     stt_language: str = "vi"
-    gemini_model: str = "models/gemini-2.5-flash"
+    gemini_model: str = "models/gemini-2.0-flash"
+    auto_gain: bool = True
+    noise_suppression: bool = True
 
 # =========================
 # Global Runtime State
@@ -103,12 +111,29 @@ GLOBAL_AUDIO_CONFIG = {
     "tts_speed": 1.0,
     "stt_model": "nova-2",
     "stt_language": "vi",
-    "gemini_model": "models/gemini-2.5-flash",
+    "gemini_model": "models/gemini-2.0-flash",
+    "auto_gain": True,
+    "noise_suppression": True,
 }
+
+
+@app.on_event("startup")
+async def startup_local_llm():
+    try:
+        initialize_local_backend()
+    except Exception as e:
+        log.warning(f"⚠️ Local LLM backend startup skipped: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_local_llm():
+    shutdown_local_backend()
 
 # Remote Mic Control – Cột đèn giao thông giữa Operator và App
 # idle = ngủ, listening = đang thu âm, processing = đang xử lý STT
 _robot_mic_status = "idle"
+_robot_mic_mode = "file"
+_tts_chunk_buffer = []  # Buffer TTS chunks để gửi lại khi Robot reconnect
 
 # =========================
 # Endpoints
@@ -153,8 +178,10 @@ async def list_vi_voices():
 
 @app.get("/configs")
 async def get_configs():
+    local_backend = get_local_backend_status()
     return {
         "config": GLOBAL_AUDIO_CONFIG,
+        "local_llm": local_backend,
         "available_voices": CHIRP3_HD_VOICES,
         "available_stt_models": ["nova-2", "nova-2-general", "whisper-large"],
         "available_stt_languages": [
@@ -173,9 +200,18 @@ async def update_configs(req: AudioConfigRequest):
     GLOBAL_AUDIO_CONFIG["stt_model"] = req.stt_model
     GLOBAL_AUDIO_CONFIG["stt_language"] = req.stt_language
     GLOBAL_AUDIO_CONFIG["gemini_model"] = req.gemini_model
+    GLOBAL_AUDIO_CONFIG["auto_gain"] = req.auto_gain
+    GLOBAL_AUDIO_CONFIG["noise_suppression"] = req.noise_suppression
     
     # Hot-swap Gemini model nếu thay đổi
     switch_gemini_model(req.gemini_model)
+    
+    # Báo cho Robot App update config Micro
+    await robot_ws_manager.broadcast({
+        "type": "config_update",
+        "auto_gain": req.auto_gain,
+        "noise_suppression": req.noise_suppression
+    })
     
     return {"status": "Config updated", "config": GLOBAL_AUDIO_CONFIG}
 
@@ -184,12 +220,15 @@ async def update_configs(req: AudioConfigRequest):
 # =========================
 
 class MicControlRequest(BaseModel):
-    action: str  # "start" hoặc "stop"
+    action: str  # "start" hoặc "stop" hoặc "cancel"
+    mode: str = "file"  # "file" hoặc "stream"
 
 @app.post("/operator/mic-control")
 async def mic_control(req: MicControlRequest):
     """Đạo diễn (Operator) bấm nút BẬT/TẮT Mic Robot từ xa."""
-    global _robot_mic_status
+    global _robot_mic_status, _robot_mic_mode
+    _robot_mic_mode = req.mode if req.mode in ["file", "stream"] else "file"
+
     if req.action == "start":
         _robot_mic_status = "listening"
     elif req.action == "stop":
@@ -200,22 +239,28 @@ async def mic_control(req: MicControlRequest):
         return {"error": "Invalid action. Use 'start', 'stop', or 'cancel'."}
         
     # Phát qua WebSocket để Operator UI + Robot đều cập nhật ngay lập tức
-    mic_msg = {"type": "mic_status", "status": _robot_mic_status}
+    mic_msg = {"type": "mic_status", "status": _robot_mic_status, "mode": _robot_mic_mode}
     await ws_manager.broadcast(mic_msg)
     await robot_ws_manager.broadcast(mic_msg)
-    return {"status": f"Robot mic {req.action}", "mic_status": _robot_mic_status}
+    return {"status": f"Robot mic {req.action}", "mic_status": _robot_mic_status, "mode": _robot_mic_mode}
+
+@app.post("/operator/stop-tts")
+async def stop_tts():
+    """Đạo diễn (Operator) bấm nút DỪNG ĐỌC từ xa."""
+    await robot_ws_manager.broadcast({"type": "stop_tts"})
+    return {"status": "Stop TTS command sent"}
 
 @app.get("/robot/mic-status")
 async def get_mic_status():
     """App điện thoại poll mỗi 1 giây để biết Đạo diễn muốn nó làm gì."""
-    return {"mic_status": _robot_mic_status}
+    return {"mic_status": _robot_mic_status, "mode": _robot_mic_mode}
 
 @app.post("/robot/mic-done")
 async def mic_done():
     """App gọi sau khi đã upload xong audio, báo hiệu hoàn tất chu kỳ."""
     global _robot_mic_status
     _robot_mic_status = "idle"
-    idle_msg = {"type": "mic_status", "status": _robot_mic_status}
+    idle_msg = {"type": "mic_status", "status": _robot_mic_status, "mode": _robot_mic_mode}
     await ws_manager.broadcast(idle_msg)
     await robot_ws_manager.broadcast(idle_msg)
     return {"status": "Mic cycle complete", "mic_status": _robot_mic_status}
@@ -233,7 +278,7 @@ async def websocket_operator(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
         # Gửi ngay trạng thái hiện tại khi mới kết nối
-        await websocket.send_json({"type": "mic_status", "status": _robot_mic_status})
+        await websocket.send_json({"type": "mic_status", "status": _robot_mic_status, "mode": _robot_mic_mode})
         if _latest_transcript:
             await websocket.send_json({"type": "transcript", "data": _latest_transcript})
             
@@ -250,13 +295,16 @@ async def websocket_operator(websocket: WebSocket):
 @app.websocket("/ws/robot")
 async def websocket_robot(websocket: WebSocket):
     await robot_ws_manager.connect(websocket)
-    global _robot_mic_status
+    global _robot_mic_status, _robot_mic_mode
     print("🤖 Robot WebSocket connected!")
     try:
         # Đồng bộ ngay trạng thái hiện tại khi Robot vừa kết nối
-        await websocket.send_json({"type": "mic_status", "status": _robot_mic_status})
-        if _latest_robot_command:
-            await websocket.send_json({"type": "command", **_latest_robot_command})
+        await websocket.send_json({"type": "mic_status", "status": _robot_mic_status, "mode": _robot_mic_mode})
+        
+        # Nếu có phiên TTS stream dở dang, lập tức gửi lại toàn bộ buffer
+        # Robot sẽ tự dựa vào session_id và index để bỏ qua câu đã đọc
+        for chunk in _tts_chunk_buffer:
+            await websocket.send_json(chunk)
 
         while True:
             data = await websocket.receive_json()
@@ -265,18 +313,21 @@ async def websocket_robot(websocket: WebSocket):
             if msg_type == "mic_done":
                 # Robot báo đã upload xong audio
                 _robot_mic_status = "idle"
-                idle_msg = {"type": "mic_status", "status": "idle"}
+                idle_msg = {"type": "mic_status", "status": "idle", "mode": _robot_mic_mode}
                 await ws_manager.broadcast(idle_msg)
                 await robot_ws_manager.broadcast(idle_msg)
 
             elif msg_type == "manual_mic":
                 # Robot báo người dùng chạm Orb thủ công bật/tắt mic
                 action = data.get("action", "")
+                mode = data.get("mode", "")
+                if mode in ["file", "stream"]:
+                    _robot_mic_mode = mode
                 if action == "start":
                     _robot_mic_status = "listening"
                 elif action == "stop":
                     _robot_mic_status = "processing"
-                mic_msg = {"type": "mic_status", "status": _robot_mic_status}
+                mic_msg = {"type": "mic_status", "status": _robot_mic_status, "mode": _robot_mic_mode}
                 await ws_manager.broadcast(mic_msg)
 
             elif msg_type == "log":
@@ -304,7 +355,8 @@ async def process_audio(file: UploadFile = File(...)):
         if transcript.strip() == "":
             _latest_transcript = {
                 "transcript": "Không nhận được voice. Vui lòng nói lại.",
-                "candidates": []
+                "candidates": [],
+                "source": "voice"
             }
             _latest_robot_command = {
                 "text": "Không nhận được voice. Vui lòng nói lại.",
@@ -315,7 +367,8 @@ async def process_audio(file: UploadFile = File(...)):
         candidates = semantic_router.get_top_matches(transcript)
         _latest_transcript = {
             "transcript": transcript,
-            "candidates": candidates
+            "candidates": candidates,
+            "source": "voice"
         }
         await ws_manager.broadcast({"type": "transcript", "data": _latest_transcript})
         return _latest_transcript
@@ -332,34 +385,74 @@ async def get_latest_transcript():
         return res
     return None
 
+
+@app.post("/operator/clear-transcript")
+async def clear_transcript_state():
+    """Clear transcript cache so reload won't restore stale transcript."""
+    global _latest_transcript, _full_transcript
+    _latest_transcript = None
+    _full_transcript = []
+    await ws_manager.broadcast({"type": "transcript_cleared"})
+    return {"status": "Transcript state cleared"}
+
+@app.get("/presets")
+async def get_all_presets():
+    """Trả về toàn bộ QA presets để Operator UI hiển thị sẵn."""
+    try:
+        presets = []
+        for i, q in enumerate(semantic_router.preset_qs):
+            presets.append({
+                "question": q,
+                "answer": semantic_router.preset_as[i],
+            })
+        return {"presets": presets}
+    except Exception as e:
+        return {"presets": [], "error": str(e)}
+
+
+class ChatInputRequest(BaseModel):
+    text: str
+
+@app.post("/chat-input")
+async def chat_input(req: ChatInputRequest):
+    """Operator gõ chat thay vì voice → chạy semantic router + gửi transcript lên UI."""
+    global _latest_transcript
+    text = (req.text or "").strip()
+    if not text:
+        return {"error": "Text is required"}
+
+    candidates = semantic_router.get_top_matches(text)
+    _latest_transcript = {
+        "transcript": text,
+        "candidates": candidates,
+        "source": "manual",
+    }
+    await ws_manager.broadcast({"type": "transcript", "data": _latest_transcript})
+    return _latest_transcript
+
+
 @app.post("/operator-decision")
 async def operator_decision(req: DecisionRequest):
     text = ""
-    emotion = "neutral"
+    emotion = "speaking"
+    user_text = req.transcript or ""
 
-    # Lấy lịch sử hội thoại để AI nhớ ngữ cảnh
-    history_context = memory_service.get_context_string()
-
-    if req.mode == "preset":
-        text = req.selected_answer
-        emotion = "speaking"
-    elif req.mode == "ai":
-        # Using Ollama (Local LLM) through ask_socrates
-        text = ask_socrates(req.transcript, history_context, model_choice="ollama")
-        emotion = "challenge"
-    elif req.mode == "gemini":
-        # Using Gemini (Cloud LLM) through ask_socrates
-        text = ask_socrates(req.transcript, history_context, model_choice="gemini")
-        emotion = "challenge"
-    else:
-        return {"error": "Invalid mode"}
-
-    # Lưu lại cuộc hội thoại vào memory
-    memory_service.save(req.transcript, text)
-
-    # Heuristic for emotion
-    if "phản biện" in text.lower() or "nhưng" in text.lower() or "thế nào" in text.lower():
-        emotion = "challenge"
+    try:
+        if req.mode == "preset":
+            text = req.selected_answer or ""
+            emotion = "speaking"
+            memory_service.save(user_text, text)
+        elif req.mode == "ai":
+            text = await run_in_threadpool(process_chat_message, user_text, "ollama")
+            emotion = "speaking"
+        elif req.mode == "gemini":
+            text = await run_in_threadpool(process_chat_message, user_text, "gemini")
+            emotion = "speaking"
+        else:
+            return {"error": "Invalid mode"}
+    except Exception as exc:
+        log.error("operator_decision failed for mode=%s: %s", req.mode, exc)
+        return {"error": str(exc)}
 
     return {
         "text": text,
@@ -370,8 +463,8 @@ async def operator_decision(req: DecisionRequest):
 async def send_to_robot(req: RobotCommand):
     global _latest_robot_command
     text = (req.text or "").strip()
-    if req.emotion in {"speaking", "challenge"} and not text:
-        return {"error": "Text is required for speaking/challenge emotion"}
+    if req.emotion == "speaking" and not text:
+        return {"error": "Text is required for speaking emotion"}
 
     _latest_robot_command = {
         "text": text,
@@ -421,7 +514,11 @@ async def ws_audio_stream(websocket: WebSocket):
         # Chạy semantic router để gợi ý câu trả lời
         try:
             candidates = semantic_router.get_top_matches(text)
-            _latest_transcript = {"transcript": text, "candidates": candidates}
+            _latest_transcript = {
+                "transcript": text,
+                "candidates": candidates,
+                "source": "voice_stream",
+            }
             await ws_manager.broadcast({"type": "transcript", "data": _latest_transcript})
         except Exception as e:
             print(f"Semantic router error: {e}")
@@ -485,8 +582,18 @@ async def operator_decision_stream(req: StreamDecisionRequest):
     AI Trực Tiếp: Gemini stream → cắt câu → TTS từng câu → push audio chunks xuống Robot.
     Robot nói câu đầu tiên chỉ trong ~1 giây.
     """
-    global _latest_robot_command
-    history_context = memory_service.get_context_string()
+    global _latest_robot_command, _tts_chunk_buffer
+    
+    session_id = str(int(time.time() * 1000))
+    _tts_chunk_buffer = []
+
+    history_context = memory_service.get_context_string(
+        seed_turns=0,
+        recent_turns=4,
+        max_turn_chars=180,
+        max_total_chars=900,
+        include_ai=False,
+    )
 
     from services.llm_service import SYSTEM_PROMPT
     prompt = f"""{SYSTEM_PROMPT}
@@ -511,14 +618,17 @@ Câu hỏi hiện tại:
                 speed=GLOBAL_AUDIO_CONFIG["tts_speed"],
             )
 
-            # Đẩy audio chunk xuống Robot qua WebSocket
-            await robot_ws_manager.broadcast({
+            # Đẩy audio chunk xuống Robot qua WebSocket kèm buffer
+            chunk_msg = {
                 "type": "tts_chunk",
                 "audio": base64.b64encode(audio_bytes).decode(),
                 "text": sentence,
-                "emotion": "challenge",
+                "emotion": "speaking",
                 "index": chunk_index,
-            })
+                "session_id": session_id,
+            }
+            _tts_chunk_buffer.append(chunk_msg)
+            await robot_ws_manager.broadcast(chunk_msg)
 
             # Cập nhật Operator UI
             await ws_manager.broadcast({
@@ -540,11 +650,11 @@ Câu hỏi hiện tại:
         # Cập nhật latest command
         _latest_robot_command = {
             "text": full_text,
-            "emotion": "challenge",
+            "emotion": "speaking",
             "timestamp": time.time_ns()
         }
 
-        return {"text": full_text, "emotion": "challenge", "chunks": chunk_index}
+        return {"text": full_text, "emotion": "speaking", "chunks": chunk_index}
 
     except Exception as e:
         await robot_ws_manager.broadcast({"type": "tts_done"})
@@ -557,10 +667,13 @@ async def operator_decision_stream_tts(req: RobotCommand):
     AI Duyệt Trước: Operator đã duyệt text → cắt câu → TTS từng câu → push xuống Robot.
     Dùng khi Operator muốn kiểm tra nội dung trước khi cho Robot nói.
     """
-    global _latest_robot_command
+    global _latest_robot_command, _tts_chunk_buffer
     text = (req.text or "").strip()
     if not text:
         return {"error": "Text is required"}
+
+    session_id = str(int(time.time() * 1000))
+    _tts_chunk_buffer = []
 
     sentences = split_into_sentences(text)
     chunk_index = 0
@@ -572,13 +685,16 @@ async def operator_decision_stream_tts(req: RobotCommand):
             speed=GLOBAL_AUDIO_CONFIG["tts_speed"],
         )
 
-        await robot_ws_manager.broadcast({
+        chunk_msg = {
             "type": "tts_chunk",
             "audio": base64.b64encode(audio_bytes).decode(),
             "text": sentence,
             "emotion": req.emotion,
             "index": chunk_index,
-        })
+            "session_id": session_id,
+        }
+        _tts_chunk_buffer.append(chunk_msg)
+        await robot_ws_manager.broadcast(chunk_msg)
 
         await ws_manager.broadcast({
             "type": "stream_progress",
@@ -597,3 +713,6 @@ async def operator_decision_stream_tts(req: RobotCommand):
     }
 
     return {"text": text, "emotion": req.emotion, "chunks": chunk_index}
+
+if os.path.exists(ui_dir):
+    app.mount("/operator", StaticFiles(directory=ui_dir, html=True), name="operator")

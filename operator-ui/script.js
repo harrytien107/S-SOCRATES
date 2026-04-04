@@ -1,6 +1,15 @@
 let currentData = null;
 let selectedEmotion = 'neutral';
 let lastLogMsg = "";
+let _previewExpanded = false;
+let _previewCollapsedByUser = false;
+const PREVIEW_COLLAPSED_HEIGHT = 190;
+const PREVIEW_MIN_EXPANDED_HEIGHT = 260;
+const PREVIEW_AUTO_EXPAND_LINES = 5;
+const PREVIEW_AUTO_EXPAND_CHARS = 220;
+const MANUAL_TRANSCRIPT_LOCK_MS = 25000;
+let _manualTranscriptLockUntil = 0;
+let _lastBlockedTranscriptLogAt = 0;
 
 // Remote Mic Control State
 let isMicActive = false;
@@ -17,12 +26,20 @@ function formatTimer(ms) {
 // === Gửi lệnh Mic tới Backend ===
 async function _sendMicAction(action) {
     const base = window.location.origin;
+    const modeSelect = document.getElementById('stt-mode-select');
+    const mode = modeSelect ? modeSelect.value : 'file';
+
+    if (action === 'start') {
+        releaseManualTranscriptLock('voice-start');
+    }
+    
     try {
         await fetch(`${base}/operator/mic-control`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action })
+            body: JSON.stringify({ action, mode })
         });
+        addLog(`🎛️ Mic action: ${action.toUpperCase()} | mode=${mode}`);
         return true;
     } catch (err) {
         addLog(`⚠️ Không gửi được lệnh mic: ${action}`);
@@ -30,34 +47,73 @@ async function _sendMicAction(action) {
     }
 }
 
-// === QUICK SEND — Gửi emotion trực tiếp qua /send-to-robot ===
-// Không cần bấm SEND TO BOT. Dùng kênh đã hoạt động tốt.
-async function quickSendEmotion(emo, btn) {
+// === TRIGGER EMOTION ACTION ===
+// Thay thế cả gửi emotion lẫn gửi nội dung nói!
+async function triggerEmotionAction(emo, btn) {
     const base = window.location.origin;
-
-    // Highlight nút được chọn  
     setEmotion(emo, btn, false);
 
-    try {
-        const response = await fetch(`${base}/send-to-robot`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: '', emotion: emo })
-        });
-        const result = await response.json();
-        if (result.status) {
-            if (emo === 'listening') {
-                addLog(`🎙️ → Robot đang LẮNG NGHE (mic bật thật)`);
-            } else if (emo === 'uploading') {
-                addLog(`📤 → Robot đang GỬI audio lên server...`);
-            } else {
-                addLog(`✓ Sent emotion: ${emo}`);
+    const rawText = getFinalPreviewText();
+    const hasText = rawText.length > 0;
+
+    // Các trạng thái ưu tiên phát âm thanh nếu có text
+    const vocalEmotions = ['speaking', 'challenge']; 
+
+    if (hasText && vocalEmotions.includes(emo)) {
+        statusMessage(`Sending Script with ${emo}...`, "normal");
+        try {
+            const response = await fetch(`${base}/operator-decision/stream-tts`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: rawText, emotion: emo })
+            });
+            const result = await response.json();
+            if (result.error) throw new Error(result.error);
+            addLog(`✓ Sent Script [${emo.toUpperCase()}] — ${result.chunks} chunks`);
+            statusMessage(`Sent Successfully! (${result.chunks} chunks)`, "success");
+
+            // Giữ nguyên FINAL SCRIPT PREVIEW sau khi gửi để operator có thể tái sử dụng.
+            currentData = null;
+            document.getElementById('transcript-box').innerHTML = '<div style="color: var(--text-dim); text-align: center; margin-top: 2rem;">Đang đợi ghép nối...</div>';
+            document.getElementById('transcript-interim').innerText = '';
+            setEmotion('neutral', document.querySelector('.emotion-btn[data-emotion="neutral"]'), false);
+            loadAllPresets();
+        } catch (err) {
+            addLog(`✕ Send Failed: ${err.message}`);
+            statusMessage("Send Failed", "error");
+        }
+    } else {
+        // Chỉ thay đổi emotion state của Robot (text rỗng)
+        try {
+            const response = await fetch(`${base}/send-to-robot`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text: '', emotion: emo })
+            });
+            const result = await response.json();
+            if (result.status) {
+                addLog(`✓ Robot state set to: ${emo}`);
             }
+        } catch (err) {
+            addLog(`⚠️ Không cập nhật được state ${emo}`);
+        }
+    }
+}
+
+async function stopRobotTTS() {
+    const base = window.location.origin;
+    statusMessage("Đang dừng đọc...", "normal");
+    try {
+        const response = await fetch(`${base}/operator/stop-tts`, { method: 'POST' });
+        if (response.ok) {
+            addLog(`🛑 Đã gửi lệnh DỪNG TTS tới Robot`);
+            statusMessage("Đã dừng đọc", "success");
         } else {
-            throw new Error("Queue failed");
+            throw new Error("API failed");
         }
     } catch (err) {
-        addLog(`⚠️ Không gửi được lệnh ${emo}`);
+        addLog(`⚠️ Không gửi được lệnh DỪNG TTS: ${err.message}`);
+        statusMessage("Lỗi dừng đọc", "error");
     }
 }
 
@@ -73,7 +129,7 @@ async function cancelRobotMic() {
 // === WEBSOCKET CONNECTION ===
 let ws = null;
 let reconnectTimer = null;
-let _lastSyncedStatus = 'idle';
+let _lastSyncedStatus = 'idle|file';
 
 function connectWebSocket() {
     const baseInput = window.location.origin;
@@ -95,31 +151,59 @@ function connectWebSocket() {
             
             if (msg.type === 'mic_status') {
                 const status = msg.status || 'idle';
-                if (status === _lastSyncedStatus) return;
-                _lastSyncedStatus = status;
+                const mode = msg.mode || 'file';
+                const syncKey = `${status}|${mode}`;
+                if (syncKey === _lastSyncedStatus) return;
+                _lastSyncedStatus = syncKey;
 
                 if (status === 'listening' && !isMicActive) {
                     isMicActive = true;
-                    addLog(`🎙️ [Sync] App bật Mic.`);
+                    addLog(`🎙️ [Sync] App bật Mic | mode=${mode}`);
                 } else if (status !== 'listening' && isMicActive) {
                     isMicActive = false;
-                    if (status === 'processing') addLog(`📤 [Sync] App gửi audio lên Server.`);
+                    if (status === 'processing') addLog(`📤 [Sync] App gửi audio lên Server | mode=${mode}`);
                 }
             }
             
             if (msg.type === 'transcript') {
-                currentData = msg.data;
-                displayWorkflow(msg.data);
-                addLog("⚡ Received real-time voice input from Robot.");
+                const incoming = msg.data || {};
+                const source = incoming.source || 'voice';
+
+                if (isManualTranscriptLocked() && source !== 'manual') {
+                    const now = Date.now();
+                    if (now - _lastBlockedTranscriptLogAt > 4000) {
+                        addLog(`🛡️ Ignore transcript source=${source} while manual input is locked.`);
+                        _lastBlockedTranscriptLogAt = now;
+                    }
+                    return;
+                }
+
+                if (source === 'manual') {
+                    lockManualTranscript(incoming.transcript || '');
+                }
+
+                currentData = incoming;
+                displayWorkflow(incoming);
+                if (source === 'manual') {
+                    addLog('⌨️ Manual transcript synced.');
+                } else {
+                    addLog(`⚡ Received transcript source=${source}.`);
+                }
             }
 
             if (msg.type === 'stt_interim') {
+                if (isManualTranscriptLocked()) {
+                    return;
+                }
                 // Deepgram: đang nói — cập nhật dòng nhảy chữ
                 const interim = document.getElementById('transcript-interim');
                 if (interim) interim.textContent = '░░ ' + msg.text + '...';
             }
 
             if (msg.type === 'stt_final') {
+                if (isManualTranscriptLocked()) {
+                    return;
+                }
                 // Deepgram: chốt 1 câu — thêm vào transcript log
                 const box = document.getElementById('transcript-box');
                 const speakerLabel = msg.speaker >= 0 ? `[Speaker ${msg.speaker}]` : '';
@@ -143,6 +227,14 @@ function connectWebSocket() {
 
             if (msg.type === 'log') {
                 addLog(`📱 ROBOT: ${msg.message}`);
+            }
+
+            if (msg.type === 'transcript_cleared') {
+                currentData = null;
+                document.getElementById('transcript-box').innerHTML = 'Chưa có tín hiệu âm thanh...';
+                document.getElementById('transcript-interim').innerText = '';
+                loadAllPresets();
+                addLog('🧹 Transcript state cleared from server.');
             }
 
         } catch (e) {
@@ -171,13 +263,36 @@ window.onload = () => {
     preview.addEventListener('input', updateSendButton);
     preview.addEventListener('paste', (e) => e.preventDefault());
     preview.addEventListener('keydown', (e) => e.preventDefault());
+    preview.addEventListener('transitionend', () => {
+        if (_previewExpanded) {
+            adjustPreviewHeight();
+        }
+    });
     
     checkConnection();
     updateSendButton();
     addLog("Console Ready.");
+    setLogExpanded(true);
+    setPreviewExpanded(false, false);
+    window.addEventListener('resize', () => {
+        if (_previewExpanded) {
+            adjustPreviewHeight();
+        }
+    });
+
+    if (document.fonts && document.fonts.ready) {
+        document.fonts.ready.then(() => {
+            syncExpandedPreview();
+        }).catch(() => {
+            // ignore font readiness issues
+        });
+    }
     
     // Khởi tạo WebSocket thay vì setInterval polling
     connectWebSocket();
+
+    // Load tất cả presets để hiển sẵn (không cần đợi transcript)
+    loadAllPresets();
 };
 
 function addLog(msg) {
@@ -199,11 +314,14 @@ function addLog(msg) {
     }
 }
 
-let _logExpanded = false;
-function toggleLogExpand() {
-    _logExpanded = !_logExpanded;
+let _logExpanded = true;
+
+function setLogExpanded(expanded) {
+    _logExpanded = !!expanded;
     const container = document.getElementById('log-container');
     const btn = document.getElementById('expand-log-btn');
+    if (!container || !btn) return;
+
     if (_logExpanded) {
         container.classList.add('log-expanded');
         container.style.maxHeight = '500px';
@@ -217,10 +335,37 @@ function toggleLogExpand() {
     }
 }
 
+function toggleLogExpand() {
+    setLogExpanded(!_logExpanded);
+}
+
 function statusMessage(msg, type = 'normal') {
     const status = document.getElementById('last-sent-status');
     status.innerText = msg;
     status.style.color = type === 'error' ? 'var(--danger)' : (type === 'success' ? 'var(--cyan)' : 'var(--text-dim)');
+}
+
+function isManualTranscriptLocked() {
+    return Date.now() < _manualTranscriptLockUntil;
+}
+
+function lockManualTranscript(text = '') {
+    _manualTranscriptLockUntil = Date.now() + MANUAL_TRANSCRIPT_LOCK_MS;
+    if (text) {
+        currentData = {
+            ...(currentData || {}),
+            transcript: text,
+            source: 'manual',
+        };
+    }
+}
+
+function releaseManualTranscriptLock(reason = '') {
+    if (_manualTranscriptLockUntil <= 0) return;
+    _manualTranscriptLockUntil = 0;
+    if (reason) {
+        addLog(`🔓 Manual transcript unlocked (${reason}).`);
+    }
 }
 
 function toggleModal(show) {
@@ -228,20 +373,105 @@ function toggleModal(show) {
     if (show) syncConfigs();
 }
 
-function syncExpandedPreview() {
+function getFinalPreviewText() {
     const preview = document.getElementById('final-preview');
-    const expanded = document.getElementById('final-preview-expanded');
-    if (!preview || !expanded) return;
-    expanded.innerText = preview.innerText || '';
+    return (preview?.innerText || '').trim();
 }
 
-function togglePreviewModal(show) {
-    const modal = document.getElementById('preview-modal');
-    if (!modal) return;
-    if (show) {
-        syncExpandedPreview();
+function shouldAutoExpandPreview() {
+    const preview = document.getElementById('final-preview');
+    if (!preview) return false;
+
+    const text = preview.innerText || '';
+    if (!text.trim()) return false;
+
+    const explicitLineCount = text.split(/\r?\n/).length;
+    const wrappedLineEstimate = Math.ceil(text.length / 90);
+    const visualLineCount = Math.max(explicitLineCount, wrappedLineEstimate);
+    return (
+        visualLineCount >= PREVIEW_AUTO_EXPAND_LINES ||
+        text.length >= PREVIEW_AUTO_EXPAND_CHARS ||
+        preview.scrollHeight > PREVIEW_COLLAPSED_HEIGHT + 30
+    );
+}
+
+function setFinalPreviewText(text) {
+    const preview = document.getElementById('final-preview');
+    if (!preview) return;
+
+    preview.innerText = text || '';
+    _previewCollapsedByUser = false;
+    syncExpandedPreview();
+    requestAnimationFrame(() => requestAnimationFrame(adjustPreviewHeight));
+    updateSendButton();
+}
+
+function adjustPreviewHeight() {
+    const preview = document.getElementById('final-preview');
+    if (!preview) return;
+
+    if (!_previewExpanded) {
+        preview.style.height = `${PREVIEW_COLLAPSED_HEIGHT}px`;
+        preview.style.maxHeight = '';
+        preview.style.overflowY = 'auto';
+        return;
     }
-    modal.classList.toggle('open', show);
+
+    preview.style.height = 'auto';
+    const text = preview.innerText || '';
+    const lineCount = Math.max(1, text.split(/\r?\n/).length);
+    const lineHeight = parseFloat(window.getComputedStyle(preview).lineHeight) || 28;
+    const lineBasedHeight = Math.ceil(lineCount * lineHeight + 56);
+    const rawTargetHeight = Math.max(preview.scrollHeight + 8, lineBasedHeight);
+    const minHeight = PREVIEW_MIN_EXPANDED_HEIGHT;
+    const targetHeight = Math.max(rawTargetHeight, minHeight);
+    preview.style.height = `${targetHeight}px`;
+    preview.style.maxHeight = 'none';
+    preview.style.overflowY = 'auto';
+}
+
+function setPreviewExpanded(expanded, byUser = false) {
+    _previewExpanded = !!expanded;
+    const preview = document.getElementById('final-preview');
+    const btn = document.getElementById('expand-preview-btn');
+    if (!preview || !btn) return;
+
+    if (byUser && !_previewExpanded) {
+        _previewCollapsedByUser = true;
+    }
+    if (_previewExpanded) {
+        _previewCollapsedByUser = false;
+    }
+
+    preview.classList.toggle('preview-expanded-inline', _previewExpanded);
+    btn.textContent = _previewExpanded ? '⤡ COLLAPSE' : '⤢ EXPAND';
+    requestAnimationFrame(adjustPreviewHeight);
+}
+
+function togglePreviewExpand() {
+    setPreviewExpanded(!_previewExpanded, true);
+}
+
+function syncExpandedPreview() {
+    const preview = document.getElementById('final-preview');
+    if (!preview) return;
+
+    const text = preview.innerText.trim();
+    if (!text) {
+        if (_previewExpanded) {
+            setPreviewExpanded(false, false);
+        } else {
+            requestAnimationFrame(adjustPreviewHeight);
+        }
+        return;
+    }
+
+    if (!_previewExpanded && !_previewCollapsedByUser && shouldAutoExpandPreview()) {
+        setPreviewExpanded(true, false);
+        return;
+    }
+
+    requestAnimationFrame(() => requestAnimationFrame(adjustPreviewHeight));
 }
 
 async function saveSettings() {
@@ -258,6 +488,8 @@ async function saveSettings() {
                 stt_model: document.getElementById('cfg-stt-model').value,
                 stt_language: document.getElementById('cfg-stt-language').value,
                 gemini_model: document.getElementById('cfg-gemini-model').value,
+                auto_gain: document.getElementById('cfg-auto-gain').checked,
+                noise_suppression: document.getElementById('cfg-noise-supp').checked,
             })
         });
         addLog("🔊 Audio config saved to backend.");
@@ -319,6 +551,7 @@ function checkConnection() {
 
 async function handleFileUpload(input) {
     if (!input.files || !input.files[0]) return;
+    releaseManualTranscriptLock('file-upload');
     const file = input.files[0];
     const base = window.location.origin;
     
@@ -350,54 +583,137 @@ function displayWorkflow(data) {
     list.innerHTML = '';
     
     if (data.candidates && data.candidates.length > 0) {
-        document.getElementById('match-count').innerText = `${data.candidates.length} matches`;
+        document.getElementById('match-count').innerText = `${data.candidates.length} kết quả phù hợp`;
         data.candidates.forEach((c) => {
             const card = document.createElement('div');
             card.className = 'suggestion-card';
             card.innerHTML = `
                 <span class="score-pill">${(c.score * 100).toFixed(0)}%</span>
-                <div class="a-text">${c.answer}</div>
+                <div class="q-text" style="font-size: 0.65rem; color: #888; margin-bottom: 4px; border-bottom: 1px dotted rgba(255,255,255,0.1); padding-bottom: 4px;">Q: ${c.question || ''}</div>
+                <div class="a-text">A: ${c.answer}</div>
             `;
             card.onclick = () => selectResponse(c.answer, 'preset', card);
             list.appendChild(card);
         });
     } else {
-        list.innerHTML = '<div style="text-align: center; color: var(--text-dim); margin-top: 2rem;">No presets match.</div>';
+        // Không có matching → hiển full presets thay vì để trống
+        loadAllPresets();
+    }
+}
+
+// Lấy transcript text từ currentData hoặc transcript-box (hỗ trợ cả voice + chat)
+function getTranscriptText() {
+    if (currentData && currentData.transcript) return currentData.transcript;
+    const box = document.getElementById('transcript-box');
+    const text = (box?.innerText || '').trim();
+    if (text && text !== 'Chưa có tín hiệu âm thanh...' && text !== 'Đang đợi ghép nối...' && text !== 'Đang xử lý...') {
+        return text;
+    }
+    return null;
+}
+
+async function clearTranscript() {
+    releaseManualTranscriptLock('clear');
+    currentData = null;
+    document.getElementById('transcript-box').innerHTML = 'Chưa có tín hiệu âm thanh...';
+    document.getElementById('transcript-interim').innerText = '';
+    loadAllPresets();
+    const base = window.location.origin;
+    try {
+        await fetch(`${base}/operator/clear-transcript`, { method: 'POST' });
+        addLog("🗑️ Transcript cleared (local + server).");
+    } catch (err) {
+        addLog("⚠️ Cleared local transcript but failed to clear server state.");
+    }
+}
+
+// Load và hiển thị TOÀN BỘ presets (không cần transcript)
+async function loadAllPresets() {
+    const base = window.location.origin;
+    try {
+        const res = await fetch(`${base}/presets`);
+        const data = await res.json();
+        const list = document.getElementById('suggestions-list');
+        list.innerHTML = '';
+        if (data.presets && data.presets.length > 0) {
+            document.getElementById('match-count').innerText = `${data.presets.length} presets`;
+            data.presets.forEach((p) => {
+                const card = document.createElement('div');
+                card.className = 'suggestion-card';
+                card.innerHTML = `
+                    <div class="q-text" style="font-size: 0.65rem; color: #888; margin-bottom: 4px; border-bottom: 1px dotted rgba(255,255,255,0.1); padding-bottom: 4px;">Q: ${p.question || p.q || ''}</div>
+                    <div class="a-text">A: ${p.answer || p.a || ''}</div>
+                `;
+                card.onclick = () => selectResponse(p.answer, 'preset', card);
+                list.appendChild(card);
+            });
+        } else {
+            list.innerHTML = '<div style="text-align: center; color: var(--text-dim); margin-top: 2rem;">No presets available.</div>';
+        }
+    } catch (e) {
+        console.error('Failed to load presets:', e);
+    }
+}
+
+// Chat Input: Operator gõ câu hỏi thủ công khi voice không nhận được
+async function submitChatInput() {
+    const base = window.location.origin;
+    const input = document.getElementById('chat-input');
+    const text = input.value.trim();
+    if (!text) return;
+
+    input.value = '';
+    lockManualTranscript(text);
+    document.getElementById('transcript-box').innerHTML = `<span class="transcript-highlight">Đang xử lý...</span>`;
+    addLog(`⌨️ Chat gõ: "${text.substring(0, 40)}..."`);
+
+    try {
+        const res = await fetch(`${base}/chat-input`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text })
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        const normalized = {
+            ...data,
+            source: data.source || 'manual',
+        };
+        lockManualTranscript(normalized.transcript || text);
+        currentData = normalized;
+        displayWorkflow(normalized);
+        addLog('✅ Chat processed.');
+    } catch (err) {
+        releaseManualTranscriptLock('manual-chat-failed');
+        addLog(`❌ Chat failed: ${err.message}`);
+        document.getElementById('transcript-box').innerText = 'Lỗi xử lý chat.';
     }
 }
 
 function selectResponse(text, mode, element) {
-    document.getElementById('final-preview').innerText = text;
-    syncExpandedPreview();
-    updateSendButton();
+    setFinalPreviewText(text);
     
     document.querySelectorAll('.suggestion-card').forEach(el => el.classList.remove('active'));
     if (element) element.classList.add('active');
-    addLog(`Preset selected.`);
+    addLog(`Preset selected. Ready to send via Emotion buttons.`);
 }
 
 function updateSendButton() {
-    const rawText = document.getElementById('final-preview').innerText.trim();
-    const btn = document.getElementById('send-trigger');
+    const rawText = getFinalPreviewText();
     const hasText = rawText.length > 0;
-    if (hasText && selectedEmotion === 'neutral') {
-        setEmotion('speaking', null, false);
-        return;
-    }
-    const textRequired = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
 
-    btn.disabled = textRequired && !hasText;
-    if (btn.disabled) {
-        statusMessage("Speaking/Challenge cần nội dung để gửi");
-        return;
+    if (!hasText) {
+        statusMessage("Chọn preset hoặc dùng AI để tạo nội dung");
+    } else {
+        statusMessage("Ready: Nhấn [🔊 Tự Động Nói] hoặc [Neutral] để phát text!");
     }
-    statusMessage(textRequired ? "Ready to Send" : "Ready to Send (emotion only)");
 }
 
 async function useAI() {
     const base = window.location.origin;
-    if (!currentData || !currentData.transcript) {
-        // Disabled logic via updateSendButton or similar, no alert
+    const transcript = getTranscriptText();
+    if (!transcript) {
+        addLog('⚠️ Không có transcript. Hãy dùng mic hoặc gõ chat.');
         return;
     }
     
@@ -407,23 +723,23 @@ async function useAI() {
     btn.disabled = true;
     statusMessage("Generating AI reflex...");
 
+    // Đưa robot vào trạng thái uploading khi đang chờ
+    triggerEmotionAction('uploading', document.querySelector('.emotion-btn[data-emotion="uploading"]'));
+
     try {
         const response = await fetch(`${base}/operator-decision`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 mode: 'ai',
-                transcript: currentData.transcript
+                transcript: transcript
             })
         });
         const result = await response.json();
         if (result.error) throw new Error(result.error);
         
-        document.getElementById('final-preview').innerText = result.text;
-        syncExpandedPreview();
-        setEmotion(result.emotion, null, false); // Don't log auto-set emotion
-        updateSendButton();
-        addLog("AI response generated.");
+        setFinalPreviewText(result.text);
+        addLog("AI response generated. Ready to send.");
     } catch (err) {
         addLog("AI Failed.");
         statusMessage("AI Generation Failed", "error");
@@ -435,7 +751,9 @@ async function useAI() {
 
 async function useGemini() {
     const base = window.location.origin;
-    if (!currentData || !currentData.transcript) {
+    const transcript = getTranscriptText();
+    if (!transcript) {
+        addLog('⚠️ Không có transcript. Hãy dùng mic hoặc gõ chat.');
         return;
     }
     
@@ -445,26 +763,27 @@ async function useGemini() {
     btn.disabled = true;
     statusMessage("Generating Gemini response...");
 
+    // Đưa robot vào trạng thái uploading khi đang chờ
+    triggerEmotionAction('uploading', document.querySelector('.emotion-btn[data-emotion="uploading"]'));
+
     try {
         const response = await fetch(`${base}/operator-decision`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 mode: 'gemini',
-                transcript: currentData.transcript
+                transcript: transcript
             })
         });
         const result = await response.json();
         if (result.error) throw new Error(result.error);
         
-        document.getElementById('final-preview').innerText = result.text;
-        syncExpandedPreview();
-        setEmotion(result.emotion, null, false);
-        updateSendButton();
-        addLog("💎 Gemini response generated.");
+        setFinalPreviewText(result.text);
+        addLog("💎 Gemini response generated. Ready to send.");
     } catch (err) {
-        addLog("💎 Gemini Failed.");
-        statusMessage("Gemini Generation Failed", "error");
+        const detail = err?.message || 'Gemini request failed.';
+        addLog(`💎 Gemini Failed: ${detail}`);
+        statusMessage(`Gemini failed: ${detail}`, "error");
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;
@@ -501,58 +820,7 @@ async function setEmotionAndRecord(btn) {
     addLog("🎙️ Listening thật — Mic đã bật kèm Emotion listening.");
 }
 
-async function sendToRobot() {
-    const base = window.location.origin;
-    const rawText = document.getElementById('final-preview').innerText.trim();
-    if (rawText.length > 0 && selectedEmotion === 'neutral') {
-        setEmotion('speaking', null, false);
-    }
-    const text = selectedEmotion === 'no_voice'
-        ? "Không nhận được voice. Vui lòng nói lại."
-        : rawText;
-    const btn = document.getElementById('send-trigger');
-    const textRequired = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
-    if (textRequired && !text) return;
-
-    btn.disabled = true;
-    statusMessage("Sending to Robot...", "normal");
-
-    try {
-        // Chỉ dùng streaming TTS cho speaking/challenge (cần phát giọng)
-        // Các emotion khác (error, no_voice, neutral...) chỉ gửi command, KHÔNG đọc
-        const needsTTS = selectedEmotion === 'speaking' || selectedEmotion === 'challenge';
-        
-        let result;
-        if (needsTTS && text) {
-            const response = await fetch(`${base}/operator-decision/stream-tts`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text, emotion: selectedEmotion })
-            });
-            result = await response.json();
-            if (result.error) throw new Error(result.error);
-            addLog(`✓ Sent to Robot [${selectedEmotion.toUpperCase()}] — ${result.chunks} chunks`);
-            statusMessage(`Sent Successfully! (${result.chunks} chunks)`, "success");
-        } else {
-            // Emotion-only command (no TTS)
-            const response = await fetch(`${base}/send-to-robot`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ text: text || '', emotion: selectedEmotion })
-            });
-            result = await response.json();
-            if (result.error) throw new Error(result.error);
-            addLog(`✓ Sent to Robot [${selectedEmotion.toUpperCase()}]`);
-            statusMessage("Sent Successfully!", "success");
-        }
-        setTimeout(() => updateSendButton(), 3000);
-    } catch (err) {
-        addLog(`✕ Send Failed: ${err.message}`);
-        statusMessage("Send Failed", "error");
-        btn.disabled = false;
-    }
-}
-
+// Hàm sendToRobot cũ đã được xóa và gộp chung vào triggerEmotionAction
 // =========================
 // LIVE AUDIO STREAMING
 // =========================
@@ -715,7 +983,7 @@ function stopLiveTranscribe() {
 async function useGeminiStream() {
     const base = window.location.origin;
 
-    // Lấy transcript: ưu tiên full_transcript từ streaming, fallback về currentData
+    // Lấy transcript từ mọi nguồn có thể
     let transcript = '';
     try {
         const streamRes = await fetch(`${base}/streaming/transcript`);
@@ -725,12 +993,12 @@ async function useGeminiStream() {
         }
     } catch (e) {}
 
-    if (!transcript && currentData && currentData.transcript) {
-        transcript = currentData.transcript;
+    if (!transcript) {
+        transcript = getTranscriptText() || '';
     }
 
     if (!transcript) {
-        addLog('⚠️ Chưa có transcript để AI phản biện.');
+        addLog('⚠️ Chưa có transcript. Hãy dùng mic hoặc gõ chat.');
         return;
     }
 
@@ -749,10 +1017,8 @@ async function useGeminiStream() {
         const result = await response.json();
         if (result.error) throw new Error(result.error);
 
-        document.getElementById('final-preview').innerText = result.text;
-        syncExpandedPreview();
-        setEmotion('challenge', null, false);
-        updateSendButton();
+        setFinalPreviewText(result.text);
+        setEmotion('speaking', document.querySelector('.emotion-btn[data-emotion="speaking"]'), false);
         addLog(`⚡ AI Trực Tiếp hoàn tất: ${result.chunks} chunks`);
         statusMessage(`AI Stream done! (${result.chunks} chunks)`, 'success');
     } catch (err) {

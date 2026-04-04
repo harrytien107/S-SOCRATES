@@ -52,3 +52,7 @@ push_output.txt
 # IDE / Editor Settings
 .idea/
 .vscode/
+.specstory/
+
+S-SOCRATES-APP/voice_chat_app/ios/Flutter/flutter_export_environment.sh
+S-SOCRATES-APP/voice_chat_app/ios/Flutter/Generated.xcconfig
