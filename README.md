@@ -19,111 +19,122 @@
 
 ### Sơ Đồ Tổng Quan
 
-```
-                      ┌──────────────────────────────────────────────────────┐
-                      │         GIAO DIỆN ĐIỀU PHỐI(Trình Duyệt Web)         │
-                      │  ┌────────────────────────────────────────────────┐  │
-                      │  │ Bố cục 3 cột:                                  │  │
-                      │  │ 1. Câu Hỏi Sẵn | 2. Nhập Từ Khách | 3. Phản Hồi│  │
-                      │  └────────────────────────────────────────────────┘  │
-                      └─────────────────────────────┬────────────────────────┘
-                                                    │
-                                  ┌─────────────────┴─────────────────┐
-                                  │                                   │
-                                  │ WebSocket: ws://backend:8000/ws/  │
-                                  │ operator (Broadcast: dữ liệu)     │
-                                  │                                   │
-                                  │ HTTP Poll: GET /latest-transcript │
-                                  │ (Định kỳ, xóa tự động)            │
-                                  │                                   │
-                                  ▼                                   ▼
-                      ┌───────────────────────┐            ┌─────────────────────┐
-                      │  BACKEND (FastAPI)    │            │  DỊCH VỤ BÊN NGOÀI  │
-                      │  (S-SOCRATES-BE)      │            │                     │
-                      │                       │            │ • Deepgram (STT)    │
-                      │ Trạng Thái Chung:     │            │ • Google Cloud TTS  │
-                      │ • transcript_mới      │            │ • Ollama (LLM)      │
-                      │ • robot_command_mới   │            │ • Gemini (LLM)      │
-                      │ • robot_mic_status    │            │                     │
-                      │ • GLOBAL_AUDIO_CONFIG │            └─────────────────────┘
-                      │                       │
-                      │ Dịch Vụ:              │
-                      │ • STT (Deepgram)      │
-                      │ • TTS (Google Cloud)  │
-                      │ • LLM (Ollama/Gemini) │
-                      │ • Quản Lý Kết Nối     │
-                      │                       │
-                      │ Chìa Khóa:            │
-                      │ dispatch_robot_       │
-                      │ request() GỬI trực    │
-                      │ tiếp đến Robot        │
-                      │ (KHÔNG POLL)          │
-                      └───────────┬───────────┘
-                                  │
-               ┌──────────────────┴──────────────────┐
-               │                                     │
-               │ HTTP POST Trực tiếp:                │
-               │ • POST :9000/mic {action}           │
-               │ • POST :9000/command {text, cảm xúc}│
-               │                                     │
-               ▼                                     ▼
-┌─────────────────────────────┐             ┌─────────────────┐
-│ ROBOT HTTP SERVER           │             │ (Backend dùng   │
-│ (Flutter, port 9000)        │             │ dispatch_robot_ │
-│                             │             │ request() để    │
-│ Endpoints:                  │             │ POST trực tiếp) │
-│ • POST /mic {action}        │             └─────────────────┘
-│ • POST /command {text,...}  │
-│ • GET /status               │
-│ • GET /health               │
-│                             │
-│ Gửi lại đến backend:        │
-│ • POST /process-audio (STT) │
-│ • POST /robot/mic-sync      │
-│ • POST /robot/log           │
-└─────────────────────────────┘
+```mermaid
+graph TD
+    A["🌐 Giao Diện Điều Phối<br/>(Trình Duyệt Web)<br/>Bố cục 3 cột:<br/>Câu Hỏi | Nhập Từ | Phản Hồi"] 
+    
+    B["⚙️ BACKEND FastAPI<br/>(S-SOCRATES-BE)<br/>---<br/>Trạng Thái:<br/>• transcript_mới<br/>• robot_command_mới<br/>• robot_mic_status<br/>• GLOBAL_AUDIO_CONFIG<br/>---<br/>dispatch_robot_request()<br/>GỬI TRỰC TIẾP tới ROBOT"]
+    
+    C["🔌 Dịch Vụ Bên Ngoài<br/>---<br/>• Deepgram STT<br/>• Google Cloud TTS<br/>• Ollama LLM<br/>• Gemini API"]
+    
+    D["🤖 Robot HTTP Server<br/>(Flutter, port 9000)<br/>---<br/>Endpoints:<br/>POST /mic {action}<br/>POST /command {text, emotion}<br/>GET /status, /health<br/>---<br/>Gửi Lại Backend:<br/>POST /process-audio<br/>POST /robot/mic-sync<br/>POST /robot/log"]
+    
+    A -->|"WebSocket:<br/>ws://backend:8000/ws/operator<br/>(Broadcast Data)"| B
+    A -->|"HTTP Poll:<br/>GET /latest-transcript"| B
+    B -->|"Gọi STT, TTS, LLM<br/>(Sync/Async)"| C
+    B -->|"HTTP POST Trực Tiếp:<br/>POST :9000/mic<br/>POST :9000/command<br/>(KHÔNG POLL)"| D
+    D -->|"Upload Audio & Status:<br/>POST /process-audio<br/>POST /robot/mic-sync<br/>POST /robot/log"| B
+    
+    style A fill:#1e3a5f,stroke:#0ea5e9,color:#fff,stroke-width:2px
+    style B fill:#1e3a5f,stroke:#10b981,color:#fff,stroke-width:2px
+    style C fill:#172554,stroke:#f59e0b,color:#fff,stroke-width:2px
+    style D fill:#1e3a5f,stroke:#ec4899,color:#fff,stroke-width:2px
 ```
 
 ### Mẫu Giao Tiếp
 
-**Giao Diện ← → Backend (WebSocket)**
-```
-kết nối: ws://backend:8000/ws/operator
-  ├─ Nhận: {type: "transcript", data: {transcript, candidates}}
-  ├─ Nhận: {type: "mic_status", status: "idle|listening|..."}
-  ├─ Nhận: {type: "log", message: "..."}
-  └─ Gửi: heartbeat (định kỳ)
+#### 1️⃣ Giao Diện ← → Backend (WebSocket)
+
+```mermaid
+graph LR
+    A["🌐 Giao Diện<br/>(Browser)"]
+    B["⚙️ Backend<br/>:8000"]
+    
+    A -->|"WebSocket<br/>ws://backend:8000/ws/operator<br/>NHẬN: type=transcript<br/>data={transcript, candidates}"| B
+    A -->|"NHẬN: type=mic_status<br/>status=idle|listening|..."| B
+    A -->|"NHẬN: type=log<br/>message=..."| B
+    A -->|"GỬI: heartbeat<br/>(định kỳ)"| B
+    
+    style A fill:#0ea5e9,stroke:#0284c7,color:#fff,stroke-width:2px
+    style B fill:#10b981,stroke:#059669,color:#fff,stroke-width:2px
 ```
 
-**Giao Diện ← Backend (HTTP Poll - Chỉ Giao Diện)**
-```
-GET /latest-transcript (poll định kỳ)
-  ├─ Lần 1: {transcript, candidates}
-  └─ Lần 2+: null (xóa tự động)
+#### 2️⃣ Giao Diện ← Backend (HTTP Poll)
+
+```mermaid
+graph LR
+    A["🌐 Giao Diện<br/>(Browser)"]
+    B["⚙️ Backend<br/>:8000"]
+    
+    A -->|"GET /latest-transcript<br/>(poll định kỳ)"| B
+    B -->|"Lần 1:<br/>{transcript, candidates}"| A
+    B -->|"Lần 2+:<br/>null (xóa tự động)"| A
+    
+    style A fill:#0ea5e9,stroke:#0284c7,color:#fff,stroke-width:2px
+    style B fill:#10b981,stroke:#059669,color:#fff,stroke-width:2px
 ```
 
-**Giao Diện → Backend → Robot (HTTP Trực Tiếp)**
-```
-POST /send-to-robot {text, emotion}
-  ├─ Backend lưu vào _latest_robot_command
-  └─ Backend POST trực tiếp tới ROBOT_CONTROL_URL:/command
+#### 3️⃣ Giao Diện → Backend → Robot (HTTP Trực Tiếp)
 
-POST /robot/mic-control {action: "start|stop|cancel"}
-  └─ Backend POST trực tiếp tới ROBOT_CONTROL_URL:/mic
+```mermaid
+graph LR
+    A["🌐 Giao Diện<br/>(Browser)"]
+    B["⚙️ Backend<br/>:8000"]
+    C["🤖 Robot<br/>:9000"]
+    
+    A -->|"POST /send-to-robot<br/>{text, emotion}"| B
+    B -->|"Lưu vào<br/>_latest_robot_command"| B
+    B -->|"POST trực tiếp<br/>/command<br/>{text, emotion}"| C
+    
+    A -->|"POST /robot/mic-control<br/>{action: start|stop|cancel}"| B
+    B -->|"POST trực tiếp<br/>/mic<br/>{action}"| C
+    
+    style A fill:#0ea5e9,stroke:#0284c7,color:#fff,stroke-width:2px
+    style B fill:#10b981,stroke:#059669,color:#fff,stroke-width:2px
+    style C fill:#ec4899,stroke:#be185d,color:#fff,stroke-width:2px
 ```
 
-**Robot HTTP Server ← Backend (Lệnh Trực Tiếp)**
-```
-Robot chạy HTTP server nghe trên :9000
-  ├─ POST /mic {action}  ← nhận điều khiển mic từ backend
-  ├─ POST /command {text, emotion}  ← nhận phản hồi từ backend
-  ├─ GET /status  ← trả về trạng thái
-  └─ GET /health  ← kiểm tra sức khỏe
+#### 4️⃣ Robot HTTP Server ← → Backend (Lệnh & Báo Cáo)
 
-Robot đồng bộ trạng thái lại:
-  ├─ POST /robot/mic-sync {status}  ← tới backend
-  └─ POST /robot/log {message}  ← tới backend (broadcast)
+```mermaid
+graph TB
+    subgraph BE["⚙️ Backend :8000"]
+        BE1["Nhận lệnh từ<br/>Giao Diện"]
+    end
+    
+    subgraph ROBOT["🤖 Robot HTTP Server :9000"]
+        R1["Endpoints<br/>Incoming"]
+        R2["Endpoints<br/>Outgoing"]
+    end
+    
+    BE1 -->|"POST /mic {action}"| R1
+    BE1 -->|"POST /command<br/>{text, emotion}"| R1
+    
+    R1 -->|"Nghe & xử lý<br/>lệnh mic/voice"| R1
+    R1 -->|"Cập nhật trạng thái<br/>GET /status, /health"| R2
+    
+    R2 -->|"POST /robot/mic-sync<br/>{status}"| BE1
+    R2 -->|"POST /robot/log<br/>{message}"| BE1
+    
+    style BE fill:#10b981,stroke:#059669,color:#fff,stroke-width:2px
+    style ROBOT fill:#ec4899,stroke:#be185d,color:#fff,stroke-width:2px
+    style R1 fill:#f97316,stroke:#ea580c,color:#fff
+    style R2 fill:#f59e0b,stroke:#d97706,color:#fff
 ```
+
+#### 🔄 Tóm Tắt Các Endpoint
+
+| Loại | Endpoint | Phương Thức | Từ | Tới | Dữ Liệu |
+|------|----------|------------|-----|-----|---------|
+| **Broadcast** | `/ws/operator` | WebSocket | Giao Diện | Backend | transcript, mic_status, log |
+| **Poll** | `/latest-transcript` | GET | Giao Diện | Backend | transcript, candidates |
+| **Command** | `/send-to-robot` | POST | Giao Diện | Backend | {text, emotion} |
+| **Mic Control** | `/robot/mic-control` | POST | Giao Diện | Backend | {action} |
+| **Robot Mic** | `/mic` | POST | Backend | Robot | {action: start\|stop\|cancel} |
+| **Robot Command** | `/command` | POST | Backend | Robot | {text, emotion} |
+| **Robot Status** | `/status`, `/health` | GET | Backend | Robot | trạng thái |
+| **Robot Sync** | `/robot/mic-sync` | POST | Robot | Backend | {status} |
+| **Robot Log** | `/robot/log` | POST | Robot | Backend | {message} |
 
 ---
 
