@@ -23,41 +23,11 @@
     </header>
 
     <main>
-        <!-- Column 1: Live Input -->
-        <section class="panel">
-            <div class="panel-header">
-                Live Guest Transcript
-                <div style="display: flex; gap: 6px; align-items: center;">
-                    <select id="audio-source" style="font-size: 0.6rem; padding: 2px 6px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-family: 'JetBrains Mono';">
-                        <option value="robot">🤖 Robot Mic</option>
-                        <option value="laptop">🎛️ Laptop/Ampli</option>
-                    </select>
-                    <button class="settings-btn" id="btn-live-transcribe" onclick="toggleLiveTranscribe()" style="font-size: 0.6rem; padding: 3px 8px;">🎧 LIVE</button>
-                </div>
-            </div>
-
-            <!-- Device Selector (ẩn mặc định, hiện khi chọn Laptop) -->
-            <div id="device-selector" style="display: none; padding: 4px 12px; border-bottom: 1px solid var(--border);">
-                <select id="audio-device-select" style="width: 100%; font-size: 0.7rem; padding: 4px 8px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; font-family: 'JetBrains Mono';">
-                    <option>Loading devices...</option>
-                </select>
-            </div>
-
-            <div class="scroll-area">
-                <!-- Transcript log (các câu đã chốt) -->
-                <div class="transcript-container" id="transcript-box">
-                    Chưa có tín hiệu âm thanh...
-                </div>
-                <!-- Dòng đang nhảy chữ (interim) -->
-                <div id="transcript-interim" style="padding: 4px 12px; color: var(--cyan); font-style: italic; opacity: 0.7; min-height: 20px;"></div>
-            </div>
-        </section>
-
-        <!-- Column 2: Suggestions -->
+        <!-- Column 1: Suggestions (Moved to left) -->
         <section class="panel">
             <div class="panel-header">
                 Preset Suggestions
-                <span id="match-count" style="opacity: 0.5;">0 matches</span>
+                <span id="match-count" style="opacity: 0.5;">0 presets</span>
             </div>
             <div class="scroll-areas" style="flex-grow: 1; overflow-y: auto; padding: 1rem;">
                 <div id="suggestions-list">
@@ -72,14 +42,38 @@
                         <span>🦙 AI (OLLAMA / QWEN)</span>
                     </button>
                     <button class="ai-reflex-btn gemini-btn" onclick="useGemini()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
-                        <span>💎 AI (GEMINI)</span>
+                        <span>💎 AI (GEMINI CLOUD)</span>
                     </button>
                 </div>
                 <div style="display: flex; gap: 8px;">
                     <button class="ai-reflex-btn" onclick="useGeminiStream()" style="flex: 1; background: linear-gradient(135deg, #ef4444, #f97316); border: 1px solid rgba(239, 68, 68, 0.4); font-size: 0.65rem;">
-                        <span>⚡ AI TRỰC TIẾP (Stream)</span>
+                        <span>⚡ GEMINI TRỰC TIẾP (Stream)</span>
                     </button>
                 </div>
+            </div>
+        </section>
+
+        <!-- Column 2: Live Input (Moved to middle) -->
+        <section class="panel">
+            <div class="panel-header" style="justify-content: space-between;">
+                Live Guest Transcript
+                <div style="display: flex; gap: 6px; align-items: center;">
+                    <button class="settings-btn" onclick="clearTranscript()" style="font-size: 0.6rem; padding: 3px 8px; background: rgba(239,68,68,0.1); color: var(--danger); border-color: rgba(239,68,68,0.3);">🗑️ CLEAR</button>
+                </div>
+            </div>
+
+            <div class="scroll-area">
+                <!-- Transcript log (ác câu đã chốt) -->
+                <div class="transcript-container" id="transcript-box">
+                    Chưa có tín hiệu âm thanh...
+                </div>
+                <!-- Dòng đang nhảy chữ (interim) -->
+                <div id="transcript-interim" style="padding: 4px 12px; color: var(--cyan); font-style: italic; opacity: 0.7; min-height: 20px;"></div>
+            </div>
+            <!-- Chat Input Box -->
+            <div style="padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px;">
+                <input type="text" id="chat-input" placeholder="Gõ câu hỏi thủ công..." style="flex:1; padding: 6px 10px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'Inter'; font-size: 0.75rem; outline: none;" onkeydown="if(event.key==='Enter') submitChatInput()">
+                <button class="settings-btn" onclick="submitChatInput()" style="padding: 6px 12px; background: var(--cyan); color: #000; border-radius: 6px; font-weight: 700; font-size: 0.7rem; border: none; cursor: pointer;">→ GỬI</button>
             </div>
         </section>
 
@@ -93,21 +87,37 @@
                 </div>
                 <div class="preview-area fixed-preview" id="final-preview" contenteditable="false"></div>
 
-                <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">SET ROBOT EMOTION</div>
-                <div class="emotion-grid">
-                    <button class="emotion-btn active" data-emotion="neutral" onclick="setEmotion('neutral', this)">Neutral</button>
-                    <button class="emotion-btn" data-emotion="listening" onclick="quickSendEmotion('listening', this)" style="background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.1)); border-color: rgba(16,185,129,0.4);">🎙️ Listening</button>
-                    <button class="emotion-btn" data-emotion="uploading" onclick="quickSendEmotion('uploading', this)" style="background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(217,119,6,0.1)); border-color: rgba(251,191,36,0.4);">📤 Đang gửi</button>
-                    <button class="emotion-btn" data-emotion="speaking" onclick="setEmotion('speaking', this)">Speaking</button>
-                    <button class="emotion-btn" data-emotion="challenge" onclick="setEmotion('challenge', this)">Challenge</button>
-                    <button class="emotion-btn" data-emotion="no_voice" onclick="setEmotion('no_voice', this)">No Voice Notice</button>
-                    <button class="emotion-btn" data-emotion="error" onclick="setEmotion('error', this)">Error</button>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                    <div class="label" style="font-size: 0.7rem; color: var(--text-dim);">MIC CONTROL (REMOTE STT)</div>
+                    <select id="stt-mode-select" class="ui-select ui-select-sm">
+                        <option value="file">File Upload (.m4a) [Chậm / An toàn]</option>
+                        <option value="stream">Live Stream (Deepgram) [Real-time]</option>
+                    </select>
+                </div>
+                <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                    <button class="emotion-btn" style="flex: 1; padding: 10px 4px; background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.1)); border-color: rgba(16,185,129,0.4);" onclick="_sendMicAction('start')">🎙️ Ghi Âm (Start)</button>
+                    <button class="emotion-btn" style="flex: 1; padding: 10px 4px; background: linear-gradient(135deg, rgba(234,179,8,0.15), rgba(202,138,4,0.1)); border-color: rgba(234,179,8,0.4);" onclick="_sendMicAction('stop')">📤 Dừng Gửi (Process)</button>
+                    <button class="emotion-btn" style="flex: 1; padding: 10px 4px; background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(185,28,28,0.1)); border-color: rgba(239,68,68,0.4);" onclick="_sendMicAction('cancel')">❌ Hủy (Cancel)</button>
                 </div>
 
-                <button class="send-btn" id="send-trigger" onclick="sendToRobot()" disabled>
-                    SEND TO ROBOT
-                </button>
-                <div id="last-sent-status">Waiting for response...</div>
+                <div style="display: flex; gap: 8px; margin-bottom: 12px;">
+                    <button class="emotion-btn" data-emotion="speaking" onclick="triggerEmotionAction('speaking', this)" style="flex: 1; padding: 10px 4px; background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(37,99,235,0.1)); border-color: rgba(59,130,246,0.4);">🔊 GỬI TTS ĐỌC CHỮ</button>
+                </div>
+
+                <div class="label" style="font-size: 0.7rem; color: var(--text-dim); margin-bottom: 8px;">SET ROBOT STATE</div>
+                <div class="emotion-grid" id="emotion-controls">
+                    <button class="emotion-btn" data-emotion="neutral" onclick="triggerEmotionAction('neutral', this)">Neutral State</button>
+                    <button class="emotion-btn" data-emotion="listening" onclick="triggerEmotionAction('listening', this)">Listening State</button>
+                    <button class="emotion-btn" data-emotion="uploading" onclick="triggerEmotionAction('uploading', this)">Thinking State</button>
+                    <button class="emotion-btn" data-emotion="no_voice" onclick="triggerEmotionAction('no_voice', this)">No Voice State</button>
+                    <button class="emotion-btn" data-emotion="error" onclick="triggerEmotionAction('error', this)">Error State</button>
+                </div>
+                
+                <div style="margin-top: 10px; display: flex; gap: 8px;">
+                    <button class="send-btn" style="flex: 1; background: var(--bg-card); border: 1px solid var(--border-color); color: var(--red); font-size: 0.8rem;" onclick="stopRobotTTS()">🛑 DỪNG ĐỌC (STOP TTS)</button>
+                </div>
+
+                <div id="last-sent-status" style="margin-top: 8px;">Waiting for action...</div>
                 
                 <div class="panel-header" style="margin-top: 1rem; padding: 4px 0; border: none; font-size: 0.65rem; display: flex; justify-content: space-between; align-items: center;">
                     System Logs
@@ -120,15 +130,15 @@
 
     <!-- Settings Modal -->
     <div class="modal" id="settings-modal">
-        <div class="modal-content" style="max-width: 520px; max-height: 730px;">
+        <div class="modal-content settings-modal-content">
             <div class="modal-header">
                 <h2 style="margin: 0; color: var(--cyan);">⚙ Settings</h2>
                 <button class="settings-btn" onclick="toggleModal(false)">✕</button>
             </div>
 
             <!-- SYSTEM ROUTING -->
-            <div style="margin-bottom: 1rem;">
-                <div style="font-size: 0.65rem; font-weight: 700; color: var(--cyan); letter-spacing: 2px; margin-bottom: 8px;">SYSTEM ROUTING</div>
+            <div class="settings-section">
+                <div class="settings-section-title">SYSTEM ROUTING</div>
                 <div class="input-group">
                     <label>TEST AUDIO UPLOAD (.WAV)</label>
                     <input type="file" id="file-upload" accept="audio/wav" onchange="handleFileUpload(this)">
@@ -136,13 +146,13 @@
             </div>
 
             <!-- AUDIO ENGINE PARAMETERS -->
-            <div style="border-top: 1px solid var(--border); padding-top: 1rem;">
-                <div style="font-size: 0.65rem; font-weight: 700; color: #8b5cf6; letter-spacing: 2px; margin-bottom: 12px;">🔊 AUDIO ENGINE PARAMETERS</div>
+            <div class="settings-section">
+                <div class="settings-section-title audio">🔊 AUDIO ENGINE PARAMETERS</div>
                 
                 <!-- TTS Voice -->
                 <div class="input-group">
                     <label>🗣️ TTS VOICE (Chirp 3 HD)</label>
-                    <select id="cfg-tts-voice" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                    <select id="cfg-tts-voice" class="ui-select">
                         <option value="Aoede">Aoede (Nữ - Mặc định)</option>
                         <option value="Kore">Kore (Nữ)</option>
                         <option value="Leda">Leda (Nữ)</option>
@@ -160,17 +170,17 @@
                     <input type="range" id="cfg-tts-speed" min="0.5" max="2.0" step="0.1" value="1.0"
                         oninput="document.getElementById('speed-display').innerText = this.value + 'x'"
                         style="width: 100%; accent-color: var(--cyan);">
-                    <div style="display: flex; font-size: 0.6rem; color: var(--text-dim);">
+                    <div class="slider-scale">
                         <span>🐢 0.5x</span>
-                        <span style="padding-left: 92px;">🏃 1.0x</span>
-                        <span style="padding-left: 226px;">🚀 2.0x</span>
+                        <span>🏃 1.0x</span>
+                        <span>🚀 2.0x</span>
                     </div>
                 </div>
 
                 <!-- STT Model -->
                 <div class="input-group">
                     <label>🎤 STT MODEL (Deepgram)</label>
-                    <select id="cfg-stt-model" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                    <select id="cfg-stt-model" class="ui-select">
                         <option value="nova-2">Nova-2 (Nhanh nhất)</option>
                         <option value="nova-2-general">Nova-2 General</option>
                         <option value="whisper-large">Whisper Large (Chính xác nhất)</option>
@@ -180,34 +190,48 @@
                 <!-- STT Language -->
                 <div class="input-group">
                     <label>🌐 STT LANGUAGE</label>
-                    <select id="cfg-stt-language" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
+                    <select id="cfg-stt-language" class="ui-select">
                         <option value="vi">🇻🇳 Tiếng Việt</option>
                         <option value="en">🇺🇸 English</option>
                         <option value="ja">🇯🇵 日本語</option>
                         <option value="zh">🇨🇳 中文</option>
                     </select>
                 </div>
+
+                <!-- Microphone Parameters -->
+                <div class="input-group" style="margin-top: 15px;">
+                    <label>🎛️ MICROPHONE SENSITIVITY</label>
+                    <div class="checkbox-group">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="cfg-auto-gain" checked style="accent-color: var(--cyan); transform: scale(1.2);">
+                            Tăng cường thu âm xa (Auto Gain)
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="cfg-noise-supp" checked style="accent-color: var(--cyan); transform: scale(1.2);">
+                            Lọc tiếng ồn (Noise Suppression)
+                        </label>
+                    </div>
+                </div>
             </div>
 
             <!-- LLM ENGINE PARAMETERS -->
-            <div style="border-top: 1px solid var(--border); padding-top: 1rem;">
-                <div style="font-size: 0.65rem; font-weight: 700; color: #4285f4; letter-spacing: 2px; margin-bottom: 12px;">🧠 LLM ENGINE PARAMETERS</div>
+            <div class="settings-section">
+                <div class="settings-section-title llm">🧠 LLM ENGINE PARAMETERS</div>
                 
                 <!-- Gemini Model -->
                 <div class="input-group">
                     <label>💎 GEMINI MODEL</label>
-                    <select id="cfg-gemini-model" style="width: 100%; padding: 8px 12px; background: var(--bg-card); color: var(--text); border: 1px solid rgba(66, 133, 244, 0.4); border-radius: 6px; font-family: 'JetBrains Mono', monospace; font-size: 0.8rem;">
-                        <option value="models/gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Mới nhất)</option>
-                        <option value="models/gemini-3-flash-preview">Gemini 3.0 Flash Preview</option>
+                    <select id="cfg-gemini-model" class="ui-select">
+                        <option value="models/gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                        <option value="models/gemini-3-flash-preview">Gemini 3 Flash Preview</option>
                         <option value="models/gemini-2.5-pro">Gemini 2.5 Pro</option>
                         <option value="models/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                        <option value="models/gemini-2.0-flash" selected>Gemini 2.0 Flash (Nhanh nhất)</option>
-                        <option value="models/gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (Nhẹ)</option>
+                        <option value="models/gemini-2.0-flash" selected>Gemini 2.0 Flash</option>
                     </select>
                 </div>
             </div>
 
-            <button class="ai-reflex-btn" onclick="saveSettings()" style="background: var(--cyan); color: var(--bg-deep); margin-top: 1rem;">💾 SAVE & RECONNECT</button>
+            <button class="ai-reflex-btn settings-save-btn" onclick="saveSettings()">💾 SAVE & RECONNECT</button>
         </div>
     </div>
 
