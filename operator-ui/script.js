@@ -3,6 +3,8 @@ let selectedEmotion = 'idle';
 let lastLogMsg = "";
 let hasReceivedDeepgramData = false; // Track xem đã nhận dữ liệu từ Deepgram chưa
 let selectedAiInputSource = 'deepgram';
+let localRuntimeStatus = null;
+let localRuntimePollTimer = null;
 
 // Remote Mic Control State
 let isMicActive = false;
@@ -63,6 +65,63 @@ function setAiInputSource(source, explicit = false) {
 
 function getApiBase() {
     return window.location.origin.replace(/\/+$/, '');
+}
+
+function getLocalRuntimeSummary(runtime) {
+    if (!runtime) return 'TurboQuant: checking runtime status...';
+
+    const phase = runtime.phase || 'unknown';
+    const detail = runtime.detail || '';
+    const prefixMap = {
+        ready: '🟢 TurboQuant ready',
+        cold: '🟡 TurboQuant online, context not restored yet',
+        starting: '🟡 TurboQuant starting',
+        warming: '🟠 TurboQuant restoring context',
+        generating: '🟠 TurboQuant generating',
+        offline: '🔴 TurboQuant offline',
+        stopped: '⚪ TurboQuant stopped',
+        error: '🔴 TurboQuant error',
+    };
+    const prefix = prefixMap[phase] || 'ℹ️ TurboQuant';
+    return detail ? `${prefix}: ${detail}` : prefix;
+}
+
+function applyLocalRuntimeStatus(runtime) {
+    localRuntimeStatus = runtime || null;
+    const statusEl = document.getElementById('local-runtime-status');
+    const localAiBtn = document.getElementById('btn-local-ai');
+    if (!statusEl || !localAiBtn) return;
+
+    statusEl.innerText = getLocalRuntimeSummary(runtime);
+
+    const phase = runtime?.phase || 'offline';
+    const busy = ['starting', 'warming', 'generating'].includes(phase);
+    const unavailable = ['offline', 'stopped', 'error'].includes(phase) || runtime?.ready === false;
+
+    statusEl.style.color =
+        phase === 'ready' ? 'var(--cyan)'
+        : phase === 'cold' ? '#facc15'
+        : busy ? '#fb923c'
+        : 'var(--danger)';
+
+    localAiBtn.disabled = busy || unavailable;
+    localAiBtn.title = runtime?.detail || 'TurboQuant is not ready yet';
+}
+
+async function syncLocalRuntimeStatus() {
+    const base = getApiBase();
+    try {
+        const response = await fetch(`${base}/local-runtime/status`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
+        applyLocalRuntimeStatus(payload.local_runtime || null);
+    } catch (_) {
+        applyLocalRuntimeStatus({
+            phase: 'offline',
+            ready: false,
+            detail: 'Unable to fetch TurboQuant status from the backend.',
+        });
+    }
 }
 
 function normalizeEmotion(emo) {
@@ -249,6 +308,10 @@ function connectWebSocket() {
                 addLog(`📱 ROBOT: ${msg.message}`);
             }
 
+            if (msg.type === 'local_runtime_status') {
+                applyLocalRuntimeStatus(msg.data || null);
+            }
+
         } catch (e) {
             console.error('WS parse error:', e);
         }
@@ -301,6 +364,10 @@ window.onload = () => {
 
 window.addEventListener('beforeunload', () => {
     isPageUnloading = true;
+    if (localRuntimePollTimer) {
+        clearInterval(localRuntimePollTimer);
+        localRuntimePollTimer = null;
+    }
     if (reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
@@ -518,6 +585,11 @@ window.onload = () => {
     }
 
     checkConnection();
+    syncLocalRuntimeStatus();
+    if (localRuntimePollTimer) {
+        clearInterval(localRuntimePollTimer);
+    }
+    localRuntimePollTimer = setInterval(syncLocalRuntimeStatus, 4000);
     loadPresetQuestions();
     updateAiSourceUI();
     updateSendButton();
@@ -714,6 +786,16 @@ function updateSendButton() {
 async function useAI() {
     const base = getApiBase();
     const aiInput = getAiInputText();
+    const phase = localRuntimeStatus?.phase || 'offline';
+    const unavailable =
+        ['starting', 'warming', 'generating', 'offline', 'stopped', 'error'].includes(phase) ||
+        localRuntimeStatus?.ready === false;
+
+    if (unavailable) {
+        statusMessage(localRuntimeStatus?.detail || 'TurboQuant is not ready yet.', "error");
+        addLog(`⚠️ TurboQuant is not ready: ${localRuntimeStatus?.detail || phase}`);
+        return;
+    }
     if (!aiInput) {
         statusMessage(
             selectedAiInputSource === 'manual'
@@ -747,9 +829,11 @@ async function useAI() {
         setEmotion(result.emotion, null, false);
         updateSendButton();
         addLog("AI response generated.");
+        await syncLocalRuntimeStatus();
     } catch (err) {
         addLog("AI Failed.");
         statusMessage("AI Generation Failed", "error");
+        await syncLocalRuntimeStatus();
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;

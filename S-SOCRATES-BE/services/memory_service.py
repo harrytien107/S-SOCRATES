@@ -1,5 +1,6 @@
 import json
 import shutil
+import time
 from pathlib import Path
 
 from utils.logger import log
@@ -7,6 +8,17 @@ from utils.logger import log
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_MEMORY_PATH = BASE_DIR / "memory.json"
+DEFAULT_CONTEXT_TURNS = 4
+DEFAULT_CONTEXT_CHARS = 1200
+DEFAULT_RECONSTRUCTION_TURNS = 3
+DEFAULT_RECONSTRUCTION_CHARS = 900
+
+
+def _trim_text(value: str, max_chars: int) -> str:
+    normalized = (value or "").strip()
+    if len(normalized) <= max_chars:
+        return normalized
+    return normalized[: max_chars - 3].rstrip() + "..."
 
 
 class MemoryService:
@@ -29,29 +41,57 @@ class MemoryService:
             return []
 
     def save(self, user_msg: str, ai_msg: str) -> None:
-        self.history.append({"user": user_msg, "ai": ai_msg})
+        self.history.append(
+            {
+                "timestamp": time.time(),
+                "user": user_msg,
+                "ai": ai_msg,
+            }
+        )
 
         with self.filepath.open("w", encoding="utf-8") as file:
             json.dump(self.history, file, ensure_ascii=False, indent=4)
 
-    def get_context_string(self) -> str:
+    def _select_recent_history(self, max_turns: int) -> list[dict]:
         if not self.history:
-            return ""
+            return []
+        return self.history[-max_turns:]
 
-        if len(self.history) <= 21:
-            selected_history = self.history
-        else:
-            selected_history = self.history[:15] + self.history[-6:]
+    def get_context_string(
+        self,
+        max_turns: int = DEFAULT_CONTEXT_TURNS,
+        max_chars: int = DEFAULT_CONTEXT_CHARS,
+    ) -> str:
+        selected_history = self._select_recent_history(max_turns=max_turns)
+        if not selected_history:
+            return ""
 
         context_lines = ["Lich su tro chuyen truoc day:"]
         for turn in selected_history:
-            user_text = turn.get("user", "")
-            ai_text = turn.get("ai", "")
+            user_text = _trim_text(turn.get("user", ""), max_chars=240)
+            ai_text = _trim_text(turn.get("ai", ""), max_chars=320)
             context_lines.append(f"User: {user_text}")
             context_lines.append(f"AI: {ai_text}")
             context_lines.append("")
 
-        return "\n".join(context_lines).strip()
+        return _trim_text("\n".join(context_lines).strip(), max_chars=max_chars)
+
+    def build_reconstruction_prompt(
+        self,
+        max_turns: int = DEFAULT_RECONSTRUCTION_TURNS,
+        max_chars: int = DEFAULT_RECONSTRUCTION_CHARS,
+    ) -> str:
+        selected_history = self._select_recent_history(max_turns=max_turns)
+        if not selected_history:
+            return ""
+
+        context_lines = [
+            "TOM TAT NGU CANH PHIEN HOI THOAI GAN DAY DE TAI TAO BO NHO NGU CANH:"
+        ]
+        for turn in selected_history:
+            context_lines.append(f"User: {_trim_text(turn.get('user', ''), max_chars=180)}")
+            context_lines.append(f"Assistant: {_trim_text(turn.get('ai', ''), max_chars=220)}")
+        return _trim_text("\n".join(context_lines), max_chars=max_chars)
 
 
 memory_service = MemoryService()

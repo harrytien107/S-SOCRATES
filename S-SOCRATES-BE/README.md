@@ -1,12 +1,15 @@
 # S-SOCRATES Backend (FastAPI)
 
-Backend chịu trách nhiệm xử lý voice/text request, điều phối AI response, và trả command cho robot app/operator UI.
+Backend chịu trách nhiệm xử lý voice/text request, điều phối AI response, quản lý RAG + memory, và trả command cho robot app/operator UI.
 
 ## Tech stack
 
 - FastAPI + Uvicorn
 - Deepgram STT
-- Semantic Router + LLM service
+- Quantized RAG retrieval
+- Gemini cloud API
+- TurboQuant local runtime
+- Persistent conversation memory
 - TTS service
 
 ## Cấu trúc chính
@@ -22,9 +25,24 @@ S-SOCRATES-BE/
 │   ├── stt_service.py
 │   ├── tts_service.py
 │   ├── llm_service.py
-│   ├── semantic_router.py
+│   ├── gemini_service.py
+│   ├── turboquant_runtime.py
+│   ├── prompt_config.py
 │   ├── memory_service.py
-│   └── chat_orchestrator.py
+│   ├── chat_orchestrator.py
+│   └── retrieval/
+│       ├── retriever.py
+│       ├── quantized_store.py
+│       ├── embedder.py
+│       ├── chunker.py
+│       └── prompt_builder.py
+├── scripts/
+│   ├── build_quantized_index.py
+│   ├── setup_turboquant_windows.ps1
+│   └── start_turboquant_windows.ps1
+├── data/
+│   ├── rag_meta.json
+│   └── rag_vectors_uint8.npz
 └── utils/
     └── logger.py
 ```
@@ -58,7 +76,8 @@ Docs: `http://localhost:8000/docs`
 - `POST /tts`: chuyển text -> audio.
 - `POST /process-audio`: pipeline voice end-to-end cho robot.
 - `POST /send-to-robot`: operator gửi lệnh (text + emotion).
-- `GET /configs`: lấy cấu hình audio, Gemini, robot control URL, và local LLM status.
+- `GET /configs`: lấy cấu hình audio, Gemini, robot control URL, local runtime status, và retrieval stats.
+- `POST /retrieval/rebuild`: rebuild lại quantized retrieval index khi đổi `knowledge/` hoặc `qa_presets.json`.
 - `GET /latest-transcript`: operator polling transcript mới nhất.
 - `WS /ws/operator`: đẩy transcript/mic status/log realtime cho operator UI.
 
@@ -77,24 +96,32 @@ Tùy cấu hình service, bạn có thể cần:
 
 ## Local LLM
 
-Backend local hiện hỗ trợ 2 lựa chọn qua `.env`:
-- `LOCAL_LLM_BACKEND=ollama`
-- `LOCAL_LLM_BACKEND=turboquant`
+Nhánh AI hiện tại chỉ có 2 loại:
+- `Gemini API` cho cloud mode
+- `TurboQuant local runtime` cho local mode
 
 Luồng hiện tại:
-- Backend vẫn giữ Gemini như trước.
-- Khi `req.mode == "ai"`, backend sẽ route sang local backend được chọn.
+- Backend giữ Gemini như cloud mode.
+- Khi `req.mode == "ai"`, backend route sang `TurboQuant local runtime`.
 - Nếu `LOCAL_LLM_AUTOSTART=1`, backend sẽ thử tự khởi động local engine khi app start.
+- Persistent memory được lưu lại để rebuild working context sau restart và warm lại context cho TurboQuant local runtime.
 
-Ví dụ Ollama:
+## Quantized RAG
 
-```env
-LOCAL_LLM_BACKEND=ollama
-LOCAL_LLM_AUTOSTART=1
-LOCAL_LLM_HOST=127.0.0.1
-LOCAL_LLM_PORT=11434
-OLLAMA_CMD=ollama
-OLLAMA_MODEL_NAME=qwen2:1.5b
+- `knowledge/uth.txt` là nguồn tri thức ưu tiên cao nhất.
+- `qa_presets.json` chỉ đóng vai trò nguồn tham khảo phụ.
+- Quantized retrieval index được lưu ở `data/`.
+- Khi thay đổi `knowledge/` hoặc `qa_presets.json`, hãy rebuild index bằng một trong hai cách:
+
+```powershell
+cd S-SOCRATES-BE
+.\.venv\Scripts\python.exe scripts\build_quantized_index.py
+```
+
+hoặc gọi:
+
+```http
+POST /retrieval/rebuild
 ```
 
 Ví dụ TurboQuant:
@@ -134,7 +161,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start_turboquant_windows.ps1
 
 ## Troubleshooting
 
-- Timeout khi polling: kiểm tra backend có đang xử lý request nặng.
+- Timeout khi polling/WebSocket: kiểm tra backend có đang xử lý request nặng.
 - Không có transcript: kiểm tra audio format, key STT, và log backend.
 - Không phát tiếng: kiểm tra TTS service và đường trả audio.
-- Local backend không lên: kiểm tra `LOCAL_LLM_BACKEND`, port, binary/path model GGUF, và log startup của FastAPI.
+- TurboQuant local backend không lên: kiểm tra port, binary/path model GGUF, và log startup của FastAPI.
+- Sau khi sửa `knowledge/uth.txt` hoặc `qa_presets.json` mà AI vẫn trả dữ liệu cũ: rebuild quantized retrieval index.

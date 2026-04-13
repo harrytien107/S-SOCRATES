@@ -8,7 +8,7 @@ $ErrorActionPreference = "Stop"
 function Get-DotEnvMap([string]$EnvFile) {
     $map = @{}
     if (-not (Test-Path $EnvFile)) {
-        throw "Không tìm thấy file .env tại $EnvFile"
+        throw ".env file was not found at $EnvFile"
     }
 
     foreach ($line in Get-Content $EnvFile) {
@@ -19,6 +19,7 @@ function Get-DotEnvMap([string]$EnvFile) {
             $map[$parts[0].Trim()] = $parts[1].Trim()
         }
     }
+
     return $map
 }
 
@@ -27,21 +28,22 @@ $envMap = Get-DotEnvMap (Join-Path $BackendRoot ".env")
 
 $serverBin = $envMap["TURBOQUANT_SERVER_BIN"]
 $modelPath = $envMap["LOCAL_LLM_GGUF_PATH"]
-$host = if ($envMap["LOCAL_LLM_HOST"]) { $envMap["LOCAL_LLM_HOST"] } else { "127.0.0.1" }
+$listenHost = if ($envMap["LOCAL_LLM_HOST"]) { $envMap["LOCAL_LLM_HOST"] } else { "127.0.0.1" }
 $port = if ($envMap["LOCAL_LLM_PORT"]) { $envMap["LOCAL_LLM_PORT"] } else { "8011" }
 $ctx = if ($envMap["TURBOQUANT_CTX"]) { $envMap["TURBOQUANT_CTX"] } else { "8192" }
 $cacheType = if ($envMap["TURBOQUANT_CACHE_TYPE"]) { $envMap["TURBOQUANT_CACHE_TYPE"] } else { "turbo2" }
 $ngl = if ($envMap["TURBOQUANT_NGL"]) { $envMap["TURBOQUANT_NGL"] } else { "99" }
+$reasoningBudget = if ($envMap["TURBOQUANT_REASONING_BUDGET"]) { $envMap["TURBOQUANT_REASONING_BUDGET"] } else { "0" }
 
 if (-not $serverBin -or -not (Test-Path $serverBin)) {
-    throw "Không tìm thấy TURBOQUANT_SERVER_BIN hợp lệ trong .env"
+    throw "A valid TURBOQUANT_SERVER_BIN was not found in .env"
 }
 if (-not $modelPath -or -not (Test-Path $modelPath)) {
-    throw "Không tìm thấy LOCAL_LLM_GGUF_PATH hợp lệ trong .env"
+    throw "A valid LOCAL_LLM_GGUF_PATH was not found in .env"
 }
 
 & $serverBin `
-    --host $host `
+    --host $listenHost `
     --port $port `
     -m $modelPath `
     -ngl $ngl `
@@ -49,4 +51,5 @@ if (-not $modelPath -or -not (Test-Path $modelPath)) {
     --flash-attn on `
     --cache-type-k $cacheType `
     --cache-type-v $cacheType `
+    --reasoning-budget $reasoningBudget `
     --jinja

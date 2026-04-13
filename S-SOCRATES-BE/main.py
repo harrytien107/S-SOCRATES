@@ -26,7 +26,10 @@ from services.llm_service import (
     initialize_local_backend,
     shutdown_local_backend,
     switch_gemini_model,
+    warm_local_context,
 )
+from services.memory_service import memory_service
+from services.retrieval.retriever import retriever
 from services.stt_service import process_stt_request
 from services.tts_service import CHIRP3_HD_VOICES, process_tts_request
 from utils.logger import log
@@ -37,7 +40,7 @@ load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 app = FastAPI(
     title="S-Socrates API",
-    description="Backend cho Voice Chat với Whisper VAD và LlamaIndex",
+    description="Backend cho S-SOCRATES: Deepgram STT, Quantized RAG, Gemini cloud, TurboQuant local runtime, va robot control.",
 )
 
 app.add_middleware(
@@ -78,6 +81,7 @@ class ConnectionManager:
 
 
 ws_manager = ConnectionManager()
+_local_runtime_warm_task: asyncio.Task | None = None
 
 
 class ChatRequest(BaseModel):
@@ -105,7 +109,7 @@ class AudioConfigRequest(BaseModel):
     tts_speed: float = 1.0
     stt_model: str = "nova-2"
     stt_language: str = "vi"
-    gemini_model: str = "models/gemini-2.0-flash"
+    gemini_model: str = "models/gemini-2.5-flash"
     robot_control_url: str | None = None
 
 
@@ -129,7 +133,7 @@ GLOBAL_AUDIO_CONFIG = {
     "tts_speed": 1.0,
     "stt_model": "nova-2",
     "stt_language": "vi",
-    "gemini_model": "models/gemini-2.0-flash",
+    "gemini_model": "models/gemini-2.5-flash",
 }
 ROBOT_CONTROL_URL = os.getenv("ROBOT_CONTROL_URL", "http://192.168.1.6:9000").rstrip("/")
 _robot_mic_status = "idle"
@@ -139,15 +143,40 @@ QA_PRESETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qa_p
 
 @app.on_event("startup")
 async def startup_local_llm():
+    global _local_runtime_warm_task
     try:
         await run_in_threadpool(initialize_local_backend)
     except Exception as e:
         log.warning(f"Local LLM backend startup skipped: {e}")
+    try:
+        await run_in_threadpool(retriever.initialize)
+    except Exception as e:
+        log.warning(f"Quantized retrieval startup skipped: {e}")
+    warm_context = memory_service.build_reconstruction_prompt()
+    if warm_context:
+        _local_runtime_warm_task = asyncio.create_task(background_warm_local_runtime(warm_context))
 
 
 @app.on_event("shutdown")
 async def shutdown_local_llm():
+    global _local_runtime_warm_task
+    if _local_runtime_warm_task is not None:
+        _local_runtime_warm_task.cancel()
+        _local_runtime_warm_task = None
     await run_in_threadpool(shutdown_local_backend)
+
+
+async def background_warm_local_runtime(warm_context: str):
+    try:
+        await run_in_threadpool(warm_local_context, warm_context)
+        await ws_manager.broadcast(
+            {
+                "type": "local_runtime_status",
+                "data": await run_in_threadpool(get_local_backend_status),
+            }
+        )
+    except Exception as exc:
+        log.warning("Background local runtime warmup skipped: %s", exc)
 
 
 def load_qa_presets():
@@ -202,11 +231,18 @@ async def list_vi_voices():
 
 @app.get("/configs")
 async def get_configs():
-    local_backend = await run_in_threadpool(get_local_backend_status)
+    local_runtime = await run_in_threadpool(get_local_backend_status)
+    retrieval_stats = await run_in_threadpool(retriever.stats)
     return {
         "config": GLOBAL_AUDIO_CONFIG,
         "robot_control_url": ROBOT_CONTROL_URL,
-        "local_llm": local_backend,
+        "local_runtime": local_runtime,
+        "local_llm": local_runtime,
+        "retrieval": retrieval_stats,
+        "supported_model_modes": [
+            {"code": "local", "label": "TurboQuant Local Model"},
+            {"code": "gemini", "label": "Gemini API"},
+        ],
         "available_voices": CHIRP3_HD_VOICES,
         "available_stt_models": ["nova-2", "nova-2-general", "whisper-large"],
         "available_stt_languages": [
@@ -217,6 +253,11 @@ async def get_configs():
         ],
         "available_gemini_models": AVAILABLE_GEMINI_MODELS,
     }
+
+
+@app.get("/local-runtime/status")
+async def get_local_runtime_status():
+    return {"local_runtime": await run_in_threadpool(get_local_backend_status)}
 
 
 @app.post("/configs")
@@ -232,6 +273,13 @@ async def update_configs(req: AudioConfigRequest):
 
     switch_gemini_model(req.gemini_model)
     return {"status": "Config updated", "config": GLOBAL_AUDIO_CONFIG}
+
+
+@app.post("/retrieval/rebuild")
+async def rebuild_retrieval_index():
+    await run_in_threadpool(retriever.initialize, True)
+    stats = await run_in_threadpool(retriever.stats)
+    return {"status": "Quantized retrieval index rebuilt", "retrieval": stats}
 
 
 async def dispatch_robot_request(path: str, payload: dict | None = None):
@@ -301,6 +349,12 @@ async def websocket_operator(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
         await websocket.send_json({"type": "mic_status", "status": _robot_mic_status})
+        await websocket.send_json(
+            {
+                "type": "local_runtime_status",
+                "data": await run_in_threadpool(get_local_backend_status),
+            }
+        )
         if _latest_transcript:
             await websocket.send_json({"type": "transcript", "data": _latest_transcript})
 
@@ -367,10 +421,17 @@ async def get_latest_transcript():
 
 @app.post("/operator-decision")
 async def operator_decision(req: DecisionRequest):
+    request_start = time.time()
     text = ""
     emotion = "neutral"
 
     try:
+        await ws_manager.broadcast(
+            {
+                "type": "local_runtime_status",
+                "data": await run_in_threadpool(get_local_backend_status),
+            }
+        )
         if req.mode == "preset":
             text = req.selected_answer or ""
             emotion = "speaking"
@@ -378,7 +439,7 @@ async def operator_decision(req: DecisionRequest):
             text = await run_in_threadpool(
                 process_chat_message,
                 req.transcript or "",
-                "ollama",
+                "local",
             )
             emotion = "speaking"
         elif req.mode == "gemini":
@@ -392,7 +453,27 @@ async def operator_decision(req: DecisionRequest):
             return {"error": "Invalid mode"}
     except Exception as e:
         log.error("operator_decision failed for mode=%s: %s", req.mode, e)
+        await ws_manager.broadcast(
+            {
+                "type": "local_runtime_status",
+                "data": await run_in_threadpool(get_local_backend_status),
+            }
+        )
         return {"error": str(e)}
+
+    total_ms = (time.time() - request_start) * 1000
+    log.info(
+        "operator_decision completed: mode=%s response_chars=%s latency_ms=%.0f",
+        req.mode,
+        len(text),
+        total_ms,
+    )
+    await ws_manager.broadcast(
+        {
+            "type": "local_runtime_status",
+            "data": await run_in_threadpool(get_local_backend_status),
+        }
+    )
 
     return {
         "text": text,
