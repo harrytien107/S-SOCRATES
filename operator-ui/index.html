@@ -36,27 +36,15 @@
                     </div>
                 </div>
             </div>
-            <div style="padding: 1rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 6px;">
-                <div style="display: flex; gap: 8px;">
-                    <button class="ai-reflex-btn" onclick="useAI()" style="flex: 1;">
-                        <span>🦙 AI (OLLAMA / QWEN)</span>
-                    </button>
-                    <button class="ai-reflex-btn openrouter-btn" onclick="useOpenRouter()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
-                        <span>🌐 AI (OPENROUTER)</span>
-                    </button>
-                </div>
-                <div style="display: flex; gap: 8px;">
-                    <button class="ai-reflex-btn" onclick="useOpenRouterStream()" style="flex: 1; background: linear-gradient(135deg, #ef4444, #f97316); border: 1px solid rgba(239, 68, 68, 0.4); font-size: 0.65rem;">
-                        <span>⚡ OPENROUTER TRỰC TIẾP (Stream)</span>
-                    </button>
-                </div>
-            </div>
         </section>
 
         <!-- Column 2: Live Input (Moved to middle) -->
         <section class="panel">
             <div class="panel-header" style="justify-content: space-between;">
-                Live Guest Transcript
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <span>Guest Input</span>
+                    <span style="font-size: 0.64rem; opacity: 0.75;">Deepgram + Manual Chat</span>
+                </div>
                 <div style="display: flex; gap: 6px; align-items: center;">
                     <button class="settings-btn" onclick="clearTranscript()" style="font-size: 0.6rem; padding: 3px 8px; background: rgba(239,68,68,0.1); color: var(--danger); border-color: rgba(239,68,68,0.3);">🗑️ CLEAR</button>
                 </div>
@@ -64,16 +52,34 @@
 
             <div class="scroll-area">
                 <!-- Transcript log (ác câu đã chốt) -->
-                <div class="transcript-container" id="transcript-box">
+                <div class="transcript-container transcript-like-input" id="transcript-box">
                     Chưa có tín hiệu âm thanh...
                 </div>
                 <!-- Dòng đang nhảy chữ (interim) -->
                 <div id="transcript-interim" style="padding: 4px 12px; color: var(--cyan); font-style: italic; opacity: 0.7; min-height: 20px;"></div>
             </div>
             <!-- Chat Input Box -->
-            <div style="padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px;">
-                <input type="text" id="chat-input" placeholder="Gõ câu hỏi thủ công..." style="flex:1; padding: 6px 10px; background: var(--bg-card); color: var(--text); border: 1px solid var(--border); border-radius: 6px; font-family: 'Inter'; font-size: 0.75rem; outline: none;" onkeydown="if(event.key==='Enter') submitChatInput()">
-                <button class="settings-btn" onclick="submitChatInput()" style="padding: 6px 12px; background: var(--cyan); color: #000; border-radius: 6px; font-weight: 700; font-size: 0.7rem; border: none; cursor: pointer;">→ GỬI</button>
+            <div class="guest-manual-section" style="padding: 8px 12px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px;">
+                <div class="label" style="font-size: 0.7rem; color: var(--cyan); letter-spacing: 1px;">MANUAL OPERATOR CHAT</div>
+                <div class="manual-chat-wrapper">
+                    <textarea id="chat-input" class="manual-chat-input" placeholder="Nhập câu hỏi cho AI..."></textarea>
+                    <div class="manual-chat-tools">
+                        <button class="settings-btn chat-expand-btn" id="chat-expand-btn" onclick="toggleManualChatExpand()">⤢ EXPAND</button>
+                    </div>
+                </div>
+                <div class="guest-ai-row" style="display: flex; gap: 8px; margin-top: 2px;">
+                    <button class="ai-reflex-btn ai-local-btn guest-ai-btn" onclick="useAI()" style="flex: 1; margin-top: 0;">
+                        <span>⚡ AI (TURBOQUANT)</span>
+                    </button>
+                    <button class="ai-reflex-btn openrouter-btn guest-ai-btn" onclick="useOpenRouter()" style="flex: 1; margin-top: 0; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
+                        <span>🌐 AI (OPENROUTER)</span>
+                    </button>
+                </div>
+                <div style="display: flex; gap: 8px; margin-top: 2px;">
+                    <button class="ai-reflex-btn ai-stream-btn guest-ai-btn" onclick="useOpenRouterStream()" style="flex: 1; margin-top: 0; background: linear-gradient(135deg, #ef4444, #f97316); border: 1px solid rgba(239, 68, 68, 0.4); font-size: 0.65rem;">
+                        <span>⚡ OPENROUTER TRỰC TIẾP (STREAM)</span>
+                    </button>
+                </div>
             </div>
         </section>
 
@@ -83,7 +89,10 @@
             <div class="scroll-area" style="display: flex; flex-direction: column;">
                 <div class="preview-header">
                     <div class="label" style="font-size: 0.7rem; color: var(--text-dim);">FINAL SCRIPT PREVIEW</div>
-                    <button class="settings-btn" id="expand-preview-btn" onclick="togglePreviewExpand()">⤢ EXPAND</button>
+                    <div style="display: flex; gap: 6px; align-items: center;">
+                        <button class="settings-btn" id="clear-preview-btn" onclick="clearFinalPreview()" style="font-size: 0.64rem; padding: 4px 8px;">🗑 CLEAR</button>
+                        <button class="settings-btn" id="expand-preview-btn" onclick="togglePreviewExpand()">⤢ EXPAND</button>
+                    </div>
                 </div>
                 <div class="preview-area fixed-preview" id="final-preview" contenteditable="false"></div>
 

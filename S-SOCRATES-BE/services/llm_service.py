@@ -58,6 +58,7 @@ YEU CAU BAT BUOC BAM PROMPT:
 - Tuân thủ tuyệt đối PERSONA + OUTPUT RULES trong SYSTEM_PROMPT.
 - Luôn xưng 'em', xưng hô lễ phép với 'Giáo sư' hoặc 'Tiến sĩ'.
 - Không trả lời kiểu "không có dữ liệu" cho các chủ đề kiến thức phổ thông.
+- Không dùng "..." hoặc "…" trong câu trả lời; nếu cần ngắt nhịp thì dùng dấu phẩy.
 """
 
 
@@ -81,6 +82,15 @@ def _wait_until_ready(checker, timeout_s: float, interval_s: float = 0.5) -> boo
 
 def _normalize_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text or "").strip()
+
+
+def _normalize_pause_punctuation(text: str) -> str:
+    cleaned = (text or "").replace("…", "...")
+    # Convert repeated dots to a spoken pause that TTS won't read as "ba cham".
+    cleaned = re.sub(r"(?:\s*\.\s*){2,}", ", ", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"([,;:!?])(?=\S)", r"\1 ", cleaned)
+    return _normalize_whitespace(cleaned)
 
 
 def _truncate_sentences(text: str, max_sentences: int) -> str:
@@ -107,6 +117,7 @@ def _truncate_words(text: str, max_words: int) -> str:
 def _enforce_socrates_style(text: str) -> str:
     cleaned = _normalize_whitespace(text)
     cleaned = cleaned.replace("S-Socrates:", "").strip()
+    cleaned = _normalize_pause_punctuation(cleaned)
 
     if not cleaned:
         return "Thưa Giáo sư, em xin lỗi, em chưa xử lý được câu hỏi này ạ."

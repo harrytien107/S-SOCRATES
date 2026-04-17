@@ -56,3 +56,12 @@ push_output.txt
 
 S-SOCRATES-APP/voice_chat_app/ios/Flutter/flutter_export_environment.sh
 S-SOCRATES-APP/voice_chat_app/ios/Flutter/Generated.xcconfig
+.opencode
+skills-lock.json
+.agents
+.gitnexus
+NLP_PiperTTS/
+AGENTS.md
+CLAUDE.md
+.claude/
+S-SOCRATES-BE/main.py.pyneat.bak

@@ -6,6 +6,7 @@ Stream tokens từ OpenRouter API, gom thành từng câu hoàn chỉnh và yiel
 import os
 import json
 import asyncio
+import re
 from concurrent.futures import ThreadPoolExecutor
 
 import requests
@@ -23,6 +24,19 @@ OPENROUTER_TEMPERATURE = float(os.getenv("OPENROUTER_TEMPERATURE", "0.3"))
 OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "300"))
 OPENROUTER_HTTP_REFERER = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
 OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "S-SOCRATES").strip()
+
+
+def _normalize_pause_punctuation(text: str) -> str:
+    cleaned = (text or "").replace("…", "...")
+    cleaned = re.sub(r"(?:\s*\.\s*){2,}", ", ", cleaned)
+    cleaned = re.sub(r"\s+([,.;:!?])", r"\1", cleaned)
+    cleaned = re.sub(r"([,;:!?])(?=\S)", r"\1 ", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip()
+
+
+def _is_spoken_sentence(text: str) -> bool:
+    return bool(re.search(r"\w", text or ""))
 
 
 def _openrouter_headers() -> dict:
@@ -93,6 +107,7 @@ def _stream_openrouter_sync(prompt: str, model_name: str):
                 continue
 
             buffer += delta
+            buffer = _normalize_pause_punctuation(buffer)
 
             while True:
                 earliest_idx = -1
@@ -105,13 +120,13 @@ def _stream_openrouter_sync(prompt: str, model_name: str):
                 if earliest_idx == -1:
                     break
 
-                sentence = buffer[:earliest_idx + 1].strip()
+                sentence = _normalize_pause_punctuation(buffer[:earliest_idx + 1])
                 buffer = buffer[earliest_idx + 1:]
-                if sentence:
+                if sentence and _is_spoken_sentence(sentence):
                     yield sentence
 
-        remaining = buffer.strip()
-        if remaining:
+        remaining = _normalize_pause_punctuation(buffer)
+        if remaining and _is_spoken_sentence(remaining):
             yield remaining
 
 

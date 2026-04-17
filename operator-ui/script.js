@@ -3,6 +3,7 @@ let selectedEmotion = 'neutral';
 let lastLogMsg = "";
 let _previewExpanded = false;
 let _previewCollapsedByUser = false;
+let _manualChatExpanded = false;
 const PREVIEW_COLLAPSED_HEIGHT = 190;
 const PREVIEW_MIN_EXPANDED_HEIGHT = 260;
 const PREVIEW_AUTO_EXPAND_LINES = 5;
@@ -378,6 +379,16 @@ function getFinalPreviewText() {
     return (preview?.innerText || '').trim();
 }
 
+function toggleManualChatExpand() {
+    const input = document.getElementById('chat-input');
+    const btn = document.getElementById('chat-expand-btn');
+    if (!input || !btn) return;
+
+    _manualChatExpanded = !_manualChatExpanded;
+    input.classList.toggle('expanded', _manualChatExpanded);
+    btn.textContent = _manualChatExpanded ? '⤡ COLLAPSE' : '⤢ EXPAND';
+}
+
 function shouldAutoExpandPreview() {
     const preview = document.getElementById('final-preview');
     if (!preview) return false;
@@ -404,6 +415,12 @@ function setFinalPreviewText(text) {
     syncExpandedPreview();
     requestAnimationFrame(() => requestAnimationFrame(adjustPreviewHeight));
     updateSendButton();
+}
+
+function clearFinalPreview() {
+    setFinalPreviewText('');
+    addLog('🧹 Final script preview cleared by operator.');
+    statusMessage('Final script preview cleared.');
 }
 
 function adjustPreviewHeight() {
@@ -611,6 +628,11 @@ function getTranscriptText() {
     if (text && text !== 'Chưa có tín hiệu âm thanh...' && text !== 'Đang đợi ghép nối...' && text !== 'Đang xử lý...') {
         return text;
     }
+
+    const manualInput = document.getElementById('chat-input');
+    const manualText = (manualInput?.value || '').trim();
+    if (manualText) return manualText;
+
     return null;
 }
 
@@ -719,7 +741,8 @@ async function useAI() {
         return;
     }
     
-    const btn = document.querySelector('.ai-reflex-btn');
+    const btn = document.querySelector('.ai-local-btn') || document.querySelector('.ai-reflex-btn');
+    if (!btn) return;
     const originalText = btn.innerHTML;
     btn.innerHTML = '<span>⏳ GEN...</span>';
     btn.disabled = true;
