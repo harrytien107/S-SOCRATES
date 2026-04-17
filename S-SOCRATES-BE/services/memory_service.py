@@ -8,10 +8,12 @@ from utils.logger import log
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_MEMORY_PATH = BASE_DIR / "memory.json"
-DEFAULT_CONTEXT_TURNS = 4
-DEFAULT_CONTEXT_CHARS = 1200
-DEFAULT_RECONSTRUCTION_TURNS = 3
-DEFAULT_RECONSTRUCTION_CHARS = 900
+DEFAULT_CONTEXT_TURNS = 2
+DEFAULT_CONTEXT_CHARS = 500
+DEFAULT_RECONSTRUCTION_TURNS = 2
+DEFAULT_RECONSTRUCTION_CHARS = 420
+DEFAULT_API_CONTEXT_TURNS = 4
+DEFAULT_API_CONTEXT_CHARS = 1200
 
 
 def _trim_text(value: str, max_chars: int) -> str:
@@ -19,6 +21,27 @@ def _trim_text(value: str, max_chars: int) -> str:
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max_chars - 3].rstrip() + "..."
+
+
+def _is_low_quality_ai_response(value: str) -> bool:
+    normalized = (value or "").strip().lower()
+    if not normalized:
+        return True
+
+    blocked_fragments = [
+        "knowledge base",
+        "prompt examples",
+        "cấu trúc dữ liệu chuẩn",
+        "cau truc du lieu chuan",
+        "dưới đây là",
+        "duoi day la",
+        "tôi không thể tạo file",
+        "toi khong the tao file",
+        "memory.json",
+        "qa_presets.json",
+        "prompt engineering",
+    ]
+    return any(fragment in normalized for fragment in blocked_fragments)
 
 
 class MemoryService:
@@ -41,6 +64,10 @@ class MemoryService:
             return []
 
     def save(self, user_msg: str, ai_msg: str) -> None:
+        if _is_low_quality_ai_response(ai_msg):
+            log.warning("Skipped saving low-quality AI response to memory.")
+            return
+
         self.history.append(
             {
                 "timestamp": time.time(),
@@ -72,6 +99,25 @@ class MemoryService:
             ai_text = _trim_text(turn.get("ai", ""), max_chars=320)
             context_lines.append(f"User: {user_text}")
             context_lines.append(f"AI: {ai_text}")
+            context_lines.append("")
+
+        return _trim_text("\n".join(context_lines).strip(), max_chars=max_chars)
+
+    def get_api_context_string(
+        self,
+        max_turns: int = DEFAULT_API_CONTEXT_TURNS,
+        max_chars: int = DEFAULT_API_CONTEXT_CHARS,
+    ) -> str:
+        selected_history = self._select_recent_history(max_turns=max_turns)
+        if not selected_history:
+            return ""
+
+        context_lines = ["Recent conversation turns:"]
+        for turn in selected_history:
+            user_text = _trim_text(turn.get("user", ""), max_chars=220)
+            ai_text = _trim_text(turn.get("ai", ""), max_chars=260)
+            context_lines.append(f"User: {user_text}")
+            context_lines.append(f"Assistant: {ai_text}")
             context_lines.append("")
 
         return _trim_text("\n".join(context_lines).strip(), max_chars=max_chars)

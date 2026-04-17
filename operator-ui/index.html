@@ -46,7 +46,7 @@
             <div class="panel-header">
                 <span>Guest Input</span>
                 <div class="panel-header-actions">
-                    <span class="panel-header-meta">Deepgram + Manual Chat</span>
+                    <span class="panel-header-meta" id="deployment-mode-label">Deepgram + Manual Chat</span>
                     <button type="button" class="settings-btn compact-btn" onclick="clearInputBoxes()">🗑 CLEAR</button>
                 </div>
             </div>
@@ -80,11 +80,11 @@
                 <button type="button" class="ai-reflex-btn" id="btn-local-ai" onclick="useAI()" style="flex: 1;">
                     <span>⚡ AI (TURBOQUANT)</span>
                 </button>
-                <button type="button" class="ai-reflex-btn gemini-btn" onclick="useGemini()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
+                <button type="button" class="ai-reflex-btn gemini-btn" id="btn-gemini-ai" onclick="useGemini()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
                     <span>💎 AI (GEMINI)</span>
                 </button>
             </div>
-            <div id="local-runtime-status" class="helper-text helper-text-accent" style="margin-top: 0.65rem;">TurboQuant: đang kiểm tra trạng thái...</div>
+            <div id="local-runtime-status" class="helper-text helper-text-accent" style="margin-top: 0.65rem;">TurboQuant: checking status...</div>
         </section>
 
         <!-- Column 3: Response Control -->

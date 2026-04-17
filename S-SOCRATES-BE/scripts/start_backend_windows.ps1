@@ -27,6 +27,7 @@ $args = @(
     "-m",
     "uvicorn",
     "main:app",
+    "--reload",
     "--host",
     $ListenHost,
     "--port",

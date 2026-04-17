@@ -37,6 +37,24 @@ from utils.logger import log
 ENV_PATH = Path(__file__).resolve().parent / ".env"
 load_dotenv(dotenv_path=ENV_PATH, override=True)
 
+api_key = os.getenv("DEEPGRAM_API_KEY")
+if not api_key:
+    print("❌ DEEPGRAM_API_KEY is MISSING in environment variables!")
+    exit(1)
+else:
+    print(f"✅ DEEPGRAM_API_KEY loaded: {api_key[:4]}...")
+
+api_key = os.getenv("GEMINI_API_KEY")
+if not api_key:
+    print("❌ GEMINI_API_KEY is MISSING in environment variables!")
+    exit(1)
+else:
+    print(f"✅ GEMINI_API_KEY loaded: {api_key[:4]}...")
+
+DEPLOYMENT_MODE = os.getenv("DEPLOYMENT_MODE", "hybrid").strip().lower()
+if DEPLOYMENT_MODE not in {"hybrid", "api", "local"}:
+    DEPLOYMENT_MODE = "hybrid"
+
 
 app = FastAPI(
     title="S-Socrates API",
@@ -141,20 +159,41 @@ _robot_mic_status = "idle"
 QA_PRESETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qa_presets.json")
 
 
+def supports_local_ai() -> bool:
+    return DEPLOYMENT_MODE in {"hybrid", "local"}
+
+
+def supports_api_ai() -> bool:
+    return DEPLOYMENT_MODE in {"hybrid", "api"}
+
+
+def build_local_runtime_payload() -> dict:
+    if supports_local_ai():
+        return get_local_backend_status()
+    return {
+        "ready": False,
+        "phase": "disabled",
+        "detail": "Local AI is disabled in this deployment mode.",
+    }
+
+
 @app.on_event("startup")
 async def startup_local_llm():
     global _local_runtime_warm_task
     try:
-        await run_in_threadpool(initialize_local_backend)
-    except Exception as e:
-        log.warning(f"Local LLM backend startup skipped: {e}")
-    try:
         await run_in_threadpool(retriever.initialize)
     except Exception as e:
         log.warning(f"Quantized retrieval startup skipped: {e}")
-    warm_context = memory_service.build_reconstruction_prompt()
-    if warm_context:
-        _local_runtime_warm_task = asyncio.create_task(background_warm_local_runtime(warm_context))
+    if supports_local_ai():
+        try:
+            await run_in_threadpool(initialize_local_backend)
+        except Exception as e:
+            log.warning(f"Local LLM backend startup skipped: {e}")
+        warm_context = memory_service.build_reconstruction_prompt()
+        if warm_context:
+            _local_runtime_warm_task = asyncio.create_task(background_warm_local_runtime(warm_context))
+    else:
+        log.info("Local AI startup skipped because DEPLOYMENT_MODE=%s", DEPLOYMENT_MODE)
 
 
 @app.on_event("shutdown")
@@ -163,16 +202,19 @@ async def shutdown_local_llm():
     if _local_runtime_warm_task is not None:
         _local_runtime_warm_task.cancel()
         _local_runtime_warm_task = None
-    await run_in_threadpool(shutdown_local_backend)
+    if supports_local_ai():
+        await run_in_threadpool(shutdown_local_backend)
 
 
 async def background_warm_local_runtime(warm_context: str):
+    if not supports_local_ai():
+        return
     try:
         await run_in_threadpool(warm_local_context, warm_context)
         await ws_manager.broadcast(
             {
                 "type": "local_runtime_status",
-                "data": await run_in_threadpool(get_local_backend_status),
+                "data": await run_in_threadpool(build_local_runtime_payload),
             }
         )
     except Exception as exc:
@@ -231,18 +273,21 @@ async def list_vi_voices():
 
 @app.get("/configs")
 async def get_configs():
-    local_runtime = await run_in_threadpool(get_local_backend_status)
+    local_runtime = await run_in_threadpool(build_local_runtime_payload)
     retrieval_stats = await run_in_threadpool(retriever.stats)
+    supported_modes = []
+    if supports_local_ai():
+        supported_modes.append({"code": "local", "label": "TurboQuant Local Model"})
+    if supports_api_ai():
+        supported_modes.append({"code": "gemini", "label": "Gemini API"})
     return {
         "config": GLOBAL_AUDIO_CONFIG,
+        "deployment_mode": DEPLOYMENT_MODE,
         "robot_control_url": ROBOT_CONTROL_URL,
         "local_runtime": local_runtime,
         "local_llm": local_runtime,
         "retrieval": retrieval_stats,
-        "supported_model_modes": [
-            {"code": "local", "label": "TurboQuant Local Model"},
-            {"code": "gemini", "label": "Gemini API"},
-        ],
+        "supported_model_modes": supported_modes,
         "available_voices": CHIRP3_HD_VOICES,
         "available_stt_models": ["nova-2", "nova-2-general", "whisper-large"],
         "available_stt_languages": [
@@ -257,7 +302,7 @@ async def get_configs():
 
 @app.get("/local-runtime/status")
 async def get_local_runtime_status():
-    return {"local_runtime": await run_in_threadpool(get_local_backend_status)}
+    return {"local_runtime": await run_in_threadpool(build_local_runtime_payload)}
 
 
 @app.post("/configs")
@@ -271,7 +316,8 @@ async def update_configs(req: AudioConfigRequest):
     if req.robot_control_url:
         ROBOT_CONTROL_URL = req.robot_control_url.rstrip("/")
 
-    switch_gemini_model(req.gemini_model)
+    if supports_api_ai():
+        switch_gemini_model(req.gemini_model)
     return {"status": "Config updated", "config": GLOBAL_AUDIO_CONFIG}
 
 
@@ -352,7 +398,7 @@ async def websocket_operator(websocket: WebSocket):
         await websocket.send_json(
             {
                 "type": "local_runtime_status",
-                "data": await run_in_threadpool(get_local_backend_status),
+                "data": await run_in_threadpool(build_local_runtime_payload),
             }
         )
         if _latest_transcript:
@@ -429,13 +475,15 @@ async def operator_decision(req: DecisionRequest):
         await ws_manager.broadcast(
             {
                 "type": "local_runtime_status",
-                "data": await run_in_threadpool(get_local_backend_status),
+                "data": await run_in_threadpool(build_local_runtime_payload),
             }
         )
         if req.mode == "preset":
             text = req.selected_answer or ""
             emotion = "speaking"
         elif req.mode == "ai":
+            if not supports_local_ai():
+                return {"error": "Local AI is disabled in this deployment mode."}
             text = await run_in_threadpool(
                 process_chat_message,
                 req.transcript or "",
@@ -443,6 +491,8 @@ async def operator_decision(req: DecisionRequest):
             )
             emotion = "speaking"
         elif req.mode == "gemini":
+            if not supports_api_ai():
+                return {"error": "API AI is disabled in this deployment mode."}
             text = await run_in_threadpool(
                 process_chat_message,
                 req.transcript or "",
@@ -456,7 +506,7 @@ async def operator_decision(req: DecisionRequest):
         await ws_manager.broadcast(
             {
                 "type": "local_runtime_status",
-                "data": await run_in_threadpool(get_local_backend_status),
+                "data": await run_in_threadpool(build_local_runtime_payload),
             }
         )
         return {"error": str(e)}
@@ -471,7 +521,7 @@ async def operator_decision(req: DecisionRequest):
     await ws_manager.broadcast(
         {
             "type": "local_runtime_status",
-            "data": await run_in_threadpool(get_local_backend_status),
+            "data": await run_in_threadpool(build_local_runtime_payload),
         }
     )
 

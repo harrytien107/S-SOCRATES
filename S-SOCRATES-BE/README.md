@@ -47,29 +47,6 @@ S-SOCRATES-BE/
     └── logger.py
 ```
 
-## Cài đặt
-
-```powershell
-cd S-SOCRATES-BE
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-Tạo file `.env` từ mẫu:
-
-```powershell
-copy .env.example .env
-```
-
-## Chạy backend
-
-```powershell
-uvicorn main:app --reload --port 8000 --host 0.0.0.0 --no-access-log
-```
-
-Docs: `http://localhost:8000/docs`
-
 ## Endpoint quan trọng
 
 - `POST /stt`: chuyển audio -> text.

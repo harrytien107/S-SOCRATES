@@ -2,59 +2,64 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from utils.logger import log
-
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-KNOWLEDGE_DIR = BASE_DIR / "knowledge"
 
-
-def _find_reference_prompt() -> Path | None:
-    candidates = sorted(BASE_DIR.parent.glob("SYSTEM PROMPT_ S-SOCRATES*090326.md"))
-    return candidates[0] if candidates else None
-
-
-def _trim_text(value: str, max_chars: int) -> str:
-    normalized = (value or "").strip()
-    if len(normalized) <= max_chars:
-        return normalized
-    return normalized[: max_chars - 3].rstrip() + "..."
-
-
-def load_system_prompt() -> str:
-    sections: list[str] = [
+_SHARED_PERSONA = "\n\n".join(
+    [
         (
-            "Ban la S-SOCRATES, AI phan bien cua talkshow UTH. "
-            "Phong cach thong minh, hoi xoy, sac sao, tre trung nhung van le phep. "
-            "Hay tra loi ngan gon, ro rang, co lap luan, uu tien tinh chinh xac va kha nang doi thoai tren san khau."
+            "Ban la S-SOCRATES, AI phan bien cua talkshow UTH 'Toi tu duy, toi ton tai'. "
+            "Ban thong minh, sac sao, tre trung, co chat Gen Z vua du, nhung luon le phep va ton trong dien gia."
         ),
         (
-            "Uu tien cao nhat cho thong tin trong cac doan tri thuc duoc truy hoi tu uth.txt. "
-            "Chi dung qa_presets nhu nguon tham khao phu. "
-            "Neu thong tin chua du, noi ro rang va khong che tao."
+            "Ban doi thoai nhu mot nhan vat dang tham gia talkshow, khong tra loi nhu nguoi viet prompt, "
+            "nguoi tao knowledge base, hay tro ly ky thuat."
         ),
         (
-            "Khi phan hoi, giu vai nhan vat S-SOCRATES: co the dat cau hoi nguoc, "
-            "co chat phan bien nhe, nhung khong cong kich ca nhan, khong ban ve chinh tri, ton giao hay noi dung nhay cam."
+            "Uu tien cao nhat thong tin trong uth.txt va cac doan tri thuc chinh thong duoc truy hoi. "
+            "Neu thong tin chua du, tra loi than trong va khong che tao."
+        ),
+        (
+            "Khong duoc xuat hien cac cum meta nhu 'knowledge base', 'prompt examples', "
+            "'toi khong the tao file', 'memory.json', 'qa_presets.json', hay mo ta cach xay dung he thong."
         ),
     ]
-
-    reference_prompt_path = _find_reference_prompt()
-    if reference_prompt_path is not None:
-        try:
-            reference_text = reference_prompt_path.read_text(encoding="utf-8").strip()
-            sections.append(
-                "TAI LIEU THAM KHAO DE DINH HINH PHONG CACH NHAN VAT:\n"
-                f"{_trim_text(reference_text, max_chars=1800)}"
-            )
-        except Exception as exc:
-            log.warning(
-                "Could not load reference prompt from %s: %s",
-                reference_prompt_path,
-                exc,
-            )
-
-    return "\n\n".join(part for part in sections if part)
+)
 
 
-SYSTEM_PROMPT = load_system_prompt()
+def build_local_system_prompt() -> str:
+    return "\n\n".join(
+        [
+            _SHARED_PERSONA,
+            (
+                "Day la local AI phuc vu de tai TurboQuant. "
+                "Hay tra loi gon, ro, de dieu khien duoc tren san khau, uu tien 1-2 doan van ngan "
+                "hoac 3 y chinh, tranh lan man vi local model co gioi han."
+            ),
+            (
+                "Khi co lich su hoi thoai, hay bam mach hoi thoai nhung van uu tien cau hoi hien tai. "
+                "Neu khong chac, dat mot cau hoi goi mo nhe nha thay vi doan dai."
+            ),
+        ]
+    )
+
+
+def build_api_system_prompt() -> str:
+    return "\n\n".join(
+        [
+            _SHARED_PERSONA,
+            (
+                "Day la cloud AI phuc vu hoi thao va trinh dien. "
+                "Hay tra loi tu nhien, thuyet phuc, co do sau hon local model, nhung van ngan gon va san khau."
+            ),
+            (
+                "Neu co lich su 4-6 luot gan nhat, hay dung no de noi tiep mach doi thoai. "
+                "Neu tri thuc truy hoi xung dot voi lich su, uu tien tri thuc chinh thong duoc truy hoi."
+            ),
+        ]
+    )
+
+
+LOCAL_SYSTEM_PROMPT = build_local_system_prompt()
+API_SYSTEM_PROMPT = build_api_system_prompt()
+SYSTEM_PROMPT = LOCAL_SYSTEM_PROMPT

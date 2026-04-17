@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 
@@ -13,7 +12,6 @@ from utils.logger import log
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 DATA_DIR = BASE_DIR / "data"
 KNOWLEDGE_DIR = BASE_DIR / "knowledge"
-QA_PRESETS_PATH = BASE_DIR / "qa_presets.json"
 VECTOR_PATH = DATA_DIR / "rag_vectors_uint8.npz"
 META_PATH = DATA_DIR / "rag_meta.json"
 
@@ -31,16 +29,6 @@ def _source_priority_bonus(item: dict) -> float:
     return 0.0
 
 
-def _load_qa_presets() -> list[dict]:
-    if not QA_PRESETS_PATH.exists():
-        return []
-    try:
-        return json.loads(QA_PRESETS_PATH.read_text(encoding="utf-8"))
-    except Exception as exc:
-        log.warning("Failed to load QA presets for retrieval: %s", exc)
-        return []
-
-
 def build_corpus(chunk_size: int = 700, overlap: int = 120) -> list[dict]:
     corpus: list[dict] = []
 
@@ -56,27 +44,13 @@ def build_corpus(chunk_size: int = 700, overlap: int = 120) -> list[dict]:
                 }
             )
 
-    for idx, item in enumerate(_load_qa_presets()):
-        question = (item.get("question") or "").strip()
-        answer = (item.get("answer") or "").strip()
-        if not question or not answer:
-            continue
-        corpus.append(
-            {
-                "id": f"qa-preset-{idx}",
-                "source": "qa_presets.json",
-                "type": "preset",
-                "text": f"Cau hoi mau: {question}\nTra loi mau: {answer}",
-            }
-        )
-
     return corpus
 
 
 def build_quantized_store() -> QuantizedVectorStore:
     corpus = build_corpus()
     if not corpus:
-        raise RuntimeError("No retrieval corpus found in knowledge/ or qa_presets.json")
+        raise RuntimeError("No retrieval corpus found in knowledge/")
     vectors = embedding_service.encode([item["text"] for item in corpus])
     store = QuantizedVectorStore.from_float_vectors(vectors, corpus)
     store.save(VECTOR_PATH, META_PATH)
@@ -101,6 +75,12 @@ class QuantizedRetriever:
                 return
             if self._store is None:
                 self._store = QuantizedVectorStore.load(VECTOR_PATH, META_PATH)
+                if any(item.get("source") == "qa_presets.json" for item in self._store.metadata):
+                    log.warning(
+                        "Detected stale retrieval index containing qa_presets.json; rebuilding knowledge-only index."
+                    )
+                    self._store = build_quantized_store()
+                    return
                 log.info(
                     "Quantized retrieval store loaded: vectors=%s path=%s",
                     len(self._store.metadata),

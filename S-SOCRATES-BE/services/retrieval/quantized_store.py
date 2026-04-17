@@ -53,11 +53,13 @@ class QuantizedVectorStore:
             return []
 
         query = query.astype(np.float32, copy=False).reshape(1, -1)
+        total_vectors = len(self.metadata)
+        top_k = max(1, min(top_k, total_vectors))
         q_uint8 = self.quantize_query(query)
         diff = self.vectors_uint8.astype(np.int16) - q_uint8.astype(np.int16)
         approx_scores = -np.sum(diff * diff, axis=1)
 
-        rerank_k = max(top_k, min(rerank_k, len(approx_scores)))
+        rerank_k = max(top_k, min(rerank_k, total_vectors))
         candidate_ids = np.argpartition(-approx_scores, rerank_k - 1)[:rerank_k]
         candidate_vectors = self.dequantize(candidate_ids)
 
@@ -102,4 +104,3 @@ class QuantizedVectorStore:
             scales=payload["scales"],
             metadata=metadata,
         )
-

@@ -359,7 +359,8 @@ main {
 }
 .fixed-preview {
   flex-grow: 0;
-  height: min(15vh, 6rem);
+  min-height: 12rem;
+  height: min(34vh, 18rem);
   overflow-y: auto;
   overflow-x: hidden;
   white-space: pre-wrap;

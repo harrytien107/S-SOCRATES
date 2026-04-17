@@ -1,173 +1,214 @@
-# S-SOCRATES: Hệ Thống AI Phản Biện
+# S-SOCRATES
 
-## 📋 Tổng Quan Dự Án
+S-SOCRATES là hệ thống robot talkshow AI của UTH, được xây dựng để vận hành theo hai hướng:
 
-**S-SOCRATES** là nền tảng điều phối robot AI tương tác giọng nói cho các buổi phản biện hoặc talkshow. Hệ thống gồm 3 thành phần chính:
+  - `Hội thảo / demo`: ưu tiên `Gemini API`
+  - `TTTN / LVTN`: ưu tiên `Local AI + TurboQuant`
 
-1. **Giao Diện Điều Phối** (Web): Giao diện web để quản lý transcript, tạo response, điều khiển mic robot từ xa
-2. **Backend** (FastAPI): Xử lý AI, STT, TTS, quản lý trạng thái, **GỬI LỆNH TRỰC TIẾP TỚI ROBOT**
-3. **Ứng Dụng Robot** (Flutter HTTP Server): Ghi âm, phát TTS, hiển thị cảm xúc, nhận lệnh từ backend
+Toàn bộ hệ thống gồm 3 thành phần:
 
-⚠️ **Điểm Chính**: Ứng Dụng Robot là một **HTTP Server** (port 9000), Backend gửi lệnh trực tiếp qua HTTP POST.
+  - `operator-ui`: giao diện điều phối trên web
+  - `S-SOCRATES-BE`: backend FastAPI xử lý STT, RAG, AI và kết nối robot
+  - `S-SOCRATES-APP/voice_chat_app`: ứng dụng robot Flutter
 
----
+## Kiến trúc tổng quát
 
-## 🏗️ Kiến Trúc Hệ Thống
-
-```mermaid
-graph TD
-    A["🌐 Giao Diện Điều Phối<br/>(Trình Duyệt Web)<br/>Bố cục 3 cột:<br/>Câu Hỏi | Nhập Từ | Phản Hồi"] 
-    
-    B["⚙️ BACKEND FastAPI<br/>(S-SOCRATES-BE)<br/>---<br/>Trạng Thái:<br/>• transcript_mới<br/>• robot_command_mới<br/>• robot_mic_status<br/>• GLOBAL_AUDIO_CONFIG<br/>---<br/>dispatch_robot_request()<br/>GỬI TRỰC TIẾP tới ROBOT"]
-    
-    C["🔌 Dịch Vụ Bên Ngoài<br/>---<br/>• Deepgram STT<br/>• Google Cloud TTS<br/>• Ollama LLM<br/>• Gemini API"]
-    
-    D["🤖 Robot HTTP Server<br/>(Flutter, port 9000)<br/>---<br/>Endpoints:<br/>POST /mic {action}<br/>POST /command {text, emotion}<br/>GET /status, /health<br/>---<br/>Gửi Lại Backend:<br/>POST /process-audio<br/>POST /robot/mic-sync<br/>POST /robot/log"]
-    
-    A -->|"WebSocket:<br/>ws://backend:8000/ws/operator<br/>(Broadcast Data)"| B
-    A -->|"HTTP Poll:<br/>GET /latest-transcript"| B
-    B -->|"Gọi STT, TTS, LLM<br/>(Sync/Async)"| C
-    B -->|"HTTP POST Trực Tiếp:<br/>POST :9000/mic<br/>POST :9000/command<br/>(KHÔNG POLL)"| D
-    D -->|"Upload Audio & Status:<br/>POST /process-audio<br/>POST /robot/mic-sync<br/>POST /robot/log"| B
-    
-    style A fill:#1e3a5f,stroke:#0ea5e9,color:#fff,stroke-width:2px
-    style B fill:#1e3a5f,stroke:#10b981,color:#fff,stroke-width:2px
-    style C fill:#172554,stroke:#f59e0b,color:#fff,stroke-width:2px
-    style D fill:#1e3a5f,stroke:#ec4899,color:#fff,stroke-width:2px
+```text
+Robot / Operator
+    ↓
+Backend
+    ↓
+RAG + Memory
+    ↓
+Gemini API hoặc TurboQuant Local AI
+    ↓
+Operator / Robot
 ```
 
----
+## Trạng thái hiện tại
 
-## 📁 Cấu Trúc File
+Dự án hiện đã tách rõ thành 3 chế độ backend:
 
-```
-S-SOCRATES/
-├── README.md
-├── operator-ui/
-│   ├── index.html
-│   ├── style.css
-│   ├── script.js
-│   └── assets/
-│
-├── S-SOCRATES-BE/
-│   ├── main.py
-│   ├── requirements.txt
-│   ├── qa_presets.json
-│   ├── memory.json
-│   ├── knowledge/
-│   │   └── uth.txt
-│   ├── services/
-│   │   ├── stt_service.py
-│   │   ├── tts_service.py
-│   │   ├── llm_service.py
-│   │   └── ...
-│   └── utils/
-│       └── logger.py
-│
-└── S-SOCRATES-APP/
-    └── voice_chat_app/
-        ├── pubspec.yaml
-        ├── lib/
-        ├── android/
-        ├── ios/
-        ├── windows/
-        └── test/
+  - `DEPLOYMENT_MODE=api`
+  - `DEPLOYMENT_MODE=local`
+  - `DEPLOYMENT_MODE=hybrid`
+
+Ý nghĩa:
+
+  - `api`: chỉ dùng Gemini
+  - `local`: chỉ dùng TurboQuant local
+  - `hybrid`: bật cả hai để dev và so sánh
+
+## Luồng xử lý chính
+
+### Voice từ robot
+
+```text
+Robot record
+ -> Backend nhận audio
+ -> Deepgram STT
+ -> transcript đưa lên Operator
+ -> Operator chọn AI
+ -> Backend lấy RAG context
+ -> Gemini hoặc TurboQuant trả lời
+ -> kết quả gửi lại robot/operator
 ```
 
----
+### Text từ operator
 
-## 🚀 Thiết Lập Phát Triển
+```text
+Operator nhập câu hỏi
+ -> Backend
+ -> RAG + memory
+ -> Gemini hoặc TurboQuant
+ -> hiển thị response
+```
 
-### Yêu Cầu
-- Python 3.10+
-- Ollama (cho LLM local)
-- Flutter SDK
-- API keys (Deepgram, Gemini, Google Cloud TTS)
+## Cấu hình trước khi chạy nằm ở `S-SOCRATES-BE`. Bạn cần chuẩn bị:
 
-### Cài Đặt
+  - Python 3.11
+  - Cài tool build nếu muốn chạy local AI (xem phần TurboQuant)
+  - API key cho Gemini, Deepgram, Google Cloud (cho retrieval)
+  - Model GGUF nếu dùng local AI
+  - Cấu hình robot control URL nếu cần
+
+### `.env` file
+
+Backend đọc cấu hình từ `S-SOCRATES-BE/.env`.
 
 ```powershell
-# Terminal 1: Chạy Ollama
-ollama pull qwen2:1.5b
-ollama serve
+GEMINI_API_KEY=my_gemini_api_key
+GOOGLE_APPLICATION_CREDENTIALS=path_to_google_credentials.json
+DEEPGRAM_API_KEY=my_deepgram_api_key
+ROBOT_CONTROL_URL=http://IP:9000
 
-# Terminal 2: Backend
+# Local AI mode for the thesis: TurboQuant local runtime
+LOCAL_LLM_BACKEND=turboquant
+LOCAL_LLM_AUTOSTART=1
+LOCAL_LLM_HOST=127.0.0.1
+LOCAL_LLM_PORT=8011
+LOCAL_LLM_TIMEOUT_S=300
+LOCAL_LLM_MAX_TOKENS=256
+LOCAL_LLM_MODEL_NAME=NameModel.gguf
+LOCAL_LLM_GGUF_PATH=path\to\NameModel.gguf
+
+# TurboQuant mode
+# Build llama-server with the provided setup script, then point this variable to it.
+TURBOQUANT_SERVER_BIN=path\to\S-SOCRATES\turboquant-workspace\llama-cpp-turboquant-cuda\build-win-cuda\bin\llama-server.exe
+TURBOQUANT_CACHE_TYPE=turbo2
+TURBOQUANT_NGL=99
+TURBOQUANT_CTX=4096
+TURBOQUANT_REASONING_BUDGET=0
+
+# Backend deployment split:
+# - api: only Gemini API pipeline
+# - local: only TurboQuant local pipeline
+# - hybrid: both are available
+DEPLOYMENT_MODE=api
+```
+
+### `setup_turboquant_windows.ps1`
+
+Backend có script `.\S-SOCRATES-BE\scripts\setup_turboquant_windows.ps1` để build và chạy TurboQuant server trên Windows. Chạy script này một lần để chuẩn bị môi trường local AI.
+
+```powershell
+param(
+    ...
+    [string]$SoftwareRoot = "path\to\" # Thay bằng đường dẫn bạn muốn cài phần mềm,
+    ...
+)
+```
+
+1. Cài tool build nếu máy chưa có:
+    - Git
+    - CMake
+    - Ninja
+    - Python 3.11
+    - Visual Studio Build Tools
+    - Có thể cả CUDA nếu bạn không bật -SkipCudaInstall
+2. Clone source TurboQuant runtime
+    - Repository llama-cpp-turboquant-cuda
+    - Mặc định vào thư mục: `path\to\S-SOCRATES\turboquant-workspace\llama-cpp-turboquant-cuda`
+3. Build ra `llama-server.exe`
+    - Đây là local server để backend gọi suy luận
+4. Tạo/cập nhật .venv cho backend
+    - Rồi `pip install -r requirements.txt`
+5. Cập nhật file `.env`
+
+### `rebuild_retrieval_windows.ps1`
+
+Nếu bạn chỉnh sửa tri thức trong `S-SOCRATES-BE/knowledge/`, hãy chạy script này để rebuild retrieval index:
+
+```powershell
 cd S-SOCRATES-BE
-python -m venv .venv
-.\.venv\Scripts\activate
-pip install -r requirements.txt
-
-# Tạo .env
-# DEEPGRAM_API_KEY=key_của_bạn
-# GEMINI_API_KEY=key_của_bạn
-# GOOGLE_APPLICATION_CREDENTIALS=/đường/dẫn/google-key.json
-# ROBOT_CONTROL_URL=http://192.168.1.6:9000
-
-uvicorn main:app --reload --port 8000 --host 0.0.0.0
-
-# Terminal 3: Giao Diện Điều Phối
-# Mở http://localhost:8000/operator trong trình duyệt
-
-# Terminal 4: Ứng Dụng Robot
-cd S-SOCRATES-APP/voice_chat_app
-flutter pub get
-flutter run -d windows  # hoặc chrome, android, etc.
+powershell -ExecutionPolicy Bypass -File .\scripts\rebuild_retrieval_windows.ps1
 ```
 
-### Biến Môi Trường
-
-Tạo `.env` trong `S-SOCRATES-BE/`:
-```bash
-# STT
-DEEPGRAM_API_KEY=<key_của_bạn>
-
-# TTS
-GOOGLE_APPLICATION_CREDENTIALS=/đường/dẫn/tuyệt/đối/google-key.json
-
-# LLM Cloud
-GEMINI_API_KEY=<key_của_bạn>
-
-# Robot
-ROBOT_CONTROL_URL=http://192.168.1.6:9000
-
-# Logging
-LOG_LEVEL=INFO
+```powershell
+param(
+    [string]$BackendRoot = "",
+    [string]$PythonExe = "path\to" # Thay bằng đường dẫn đến python.exe của bạn, ví dụ: .venv\Scripts\python.exe
+)
 ```
 
----
+### `start_backend_windows.ps1`
 
-## 🐛 Khắc Phục Sự Cố
+Script này khởi động backend trên Windows. Nó sẽ đọc cấu hình từ `.env` và khởi động FastAPI server, đồng thời nếu `LOCAL_LLM_AUTOSTART=1` thì cũng sẽ tự động khởi động TurboQuant local server.
 
-### Backend không khởi động
-```bash
-# Kiểm tra port 8000
-netstat -ano | findstr :8000
-
-# Kiểm tra phiên bản Python (phải 3.10+)
-python --version
-
-# Kiểm tra .env tồn tại
-type .env
+```powershell
+cd S-SOCRATES-BE
+powershell -ExecutionPolicy Bypass -File .\scripts\start_backend_windows.ps1
 ```
 
----
-
-## 📞 Hỗ Trợ
-
-**Tài Liệu API**:
-- Swagger UI: http://localhost:8000/docs
-- OpenAPI JSON: http://localhost:8000/openapi.json
-
-**Debug**:
-```python
-# Trong main.py
-import logging
-logging.basicConfig(level=logging.DEBUG)
+```powershell
+param(
+    [string]$BackendRoot = "",
+    [string]$PythonExe = "path\to", # Thay bằng đường dẫn đến python.exe của bạn, ví dụ: .venv\Scripts\python.exe
+    [string]$ListenHost = "0.0.0.0", # Mặc định lắng nghe trên tất cả IP, bạn có thể đổi thành "
+    [int]$Port = 8000, # Cổng mặc định
+    [switch]$NoReload
+)
 ```
 
-**Kiểm Tra Sức Khỏe**:
-```bash
-curl http://localhost:8000/
-curl http://localhost:8000/qa-presets
-curl http://localhost:8000/configs
+### `start_turboquant_server_windows.ps1`
+
+Nếu bạn muốn tự khởi động TurboQuant server riêng biệt (thay vì để backend tự start), có thể dùng script này:
+
+```powershell
+cd S-SOCRATES-BE
+powershell -ExecutionPolicy Bypass -File .\scripts\start_turboquant_server_windows.ps1
 ```
+
+## Cách chạy nhanh
+
+### 1\. Chạy backend
+
+```powershell
+cd S-SOCRATES-BE
+powershell -ExecutionPolicy Bypass -File .\scripts\start_backend_windows.ps1
+```
+
+### 2\. Mở operator UI
+
+```text
+http://localhost:8000/operator/
+```
+
+### 3\. Chạy robot app
+
+```powershell
+cd S-SOCRATES-APP\voice_chat_app
+flutter run
+```
+
+## Ghi chú vận hành
+
+  - Nếu sửa tri thức trong `S-SOCRATES-BE/knowledge/`, hãy rebuild retrieval.
+  - Nếu đổi model local GGUF, hãy sửa `.env` rồi restart backend.
+  - Nếu chạy `DEPLOYMENT_MODE=api`, backend sẽ không khởi động TurboQuant.
+  - Nếu chạy `DEPLOYMENT_MODE=local`, operator sẽ chỉ dùng local AI.
+
+## Tài liệu liên quan
+
+  - Tổng hợp backend: [README.md](.\S-SOCRATES\S-SOCRATES-BE\README.md)
+  - Tổng hợp frontend: [README.md](.\S-SOCRATES-APP\voice_chat_app\README.md)

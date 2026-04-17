@@ -5,6 +5,8 @@ let hasReceivedDeepgramData = false; // Track xem đã nhận dữ liệu từ D
 let selectedAiInputSource = 'deepgram';
 let localRuntimeStatus = null;
 let localRuntimePollTimer = null;
+let deploymentMode = 'hybrid';
+let supportedModelModes = [];
 
 // Remote Mic Control State
 let isMicActive = false;
@@ -106,6 +108,38 @@ function applyLocalRuntimeStatus(runtime) {
 
     localAiBtn.disabled = busy || unavailable;
     localAiBtn.title = runtime?.detail || 'TurboQuant is not ready yet';
+}
+
+function applyDeploymentMode(configPayload) {
+    deploymentMode = configPayload?.deployment_mode || 'hybrid';
+    supportedModelModes = configPayload?.supported_model_modes || [];
+
+    const localEnabled = supportedModelModes.some(item => item.code === 'local');
+    const geminiEnabled = supportedModelModes.some(item => item.code === 'gemini');
+    const localBtn = document.getElementById('btn-local-ai');
+    const geminiBtn = document.getElementById('btn-gemini-ai');
+    const modeLabel = document.getElementById('deployment-mode-label');
+    const runtimeStatus = document.getElementById('local-runtime-status');
+
+    if (localBtn) {
+        localBtn.style.display = localEnabled ? '' : 'none';
+    }
+    if (geminiBtn) {
+        geminiBtn.style.display = geminiEnabled ? '' : 'none';
+        geminiBtn.disabled = !geminiEnabled;
+        geminiBtn.title = geminiEnabled ? '' : 'Gemini API is disabled in this deployment mode.';
+    }
+    if (modeLabel) {
+        const labelMap = {
+            hybrid: 'Hybrid Backend Mode',
+            api: 'API-Only Backend Mode',
+            local: 'Local-Only Backend Mode',
+        };
+        modeLabel.innerText = labelMap[deploymentMode] || 'Hybrid Backend Mode';
+    }
+    if (runtimeStatus) {
+        runtimeStatus.style.display = localEnabled ? '' : 'none';
+    }
 }
 
 async function syncLocalRuntimeStatus() {
@@ -585,6 +619,7 @@ window.onload = () => {
     }
 
     checkConnection();
+    syncConfigs();
     syncLocalRuntimeStatus();
     if (localRuntimePollTimer) {
         clearInterval(localRuntimePollTimer);
@@ -631,6 +666,7 @@ async function syncConfigs() {
         if (!res.ok) return;
         const data = await res.json();
         const cfg = data.config;
+        applyDeploymentMode(data);
         const robotUrlEl = document.getElementById('robot-control-url');
 
         if (robotUrlEl) robotUrlEl.value = data.robot_control_url || '';
@@ -785,6 +821,10 @@ function updateSendButton() {
 
 async function useAI() {
     const base = getApiBase();
+    if (!supportedModelModes.some(item => item.code === 'local')) {
+        statusMessage("Local AI is disabled in this deployment mode.", "error");
+        return;
+    }
     const aiInput = getAiInputText();
     const phase = localRuntimeStatus?.phase || 'offline';
     const unavailable =
@@ -842,6 +882,10 @@ async function useAI() {
 
 async function useGemini() {
     const base = getApiBase();
+    if (!supportedModelModes.some(item => item.code === 'gemini')) {
+        statusMessage("Gemini API is disabled in this deployment mode.", "error");
+        return;
+    }
     const aiInput = getAiInputText();
     if (!aiInput) {
         statusMessage(

@@ -52,3 +52,6 @@ push_output.txt
 # IDE / Editor Settings
 .idea/
 .vscode/
+
+# File Personal
+./RUN-Project-On-Glass.md
