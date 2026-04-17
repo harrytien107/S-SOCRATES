@@ -5,15 +5,15 @@ from services.llm_service import ask_socrates
 from services.semantic_router import semantic_router
 from utils.logger import log
 
-SUPPORTED_MODEL_CHOICES = {"ollama", "gemini"}
-GEMINI_STRICT_CONTEXT_PROFILE = {
+SUPPORTED_MODEL_CHOICES = {"ollama", "openrouter"}
+OPENROUTER_STRICT_CONTEXT_PROFILE = {
     "seed_turns": 0,
     "recent_turns": 4,
     "max_turn_chars": 180,
     "max_total_chars": 900,
     "include_ai": False,
 }
-GEMINI_USE_SEMANTIC_PRESET = os.getenv("GEMINI_USE_SEMANTIC_PRESET", "0").strip().lower() in {
+OPENROUTER_USE_SEMANTIC_PRESET = os.getenv("OPENROUTER_USE_SEMANTIC_PRESET", "0").strip().lower() in {
     "1",
     "true",
     "yes",
@@ -28,22 +28,22 @@ def process_chat_message(message: str, model_choice: str = "ollama") -> str:
 
     if model_choice not in SUPPORTED_MODEL_CHOICES:
         raise ValueError(
-            f"Unsupported model_choice '{model_choice}'. Expected one of: ollama, gemini."
+            f"Unsupported model_choice '{model_choice}'. Expected one of: ollama, openrouter."
         )
 
     log.info("[CHAT] Processing request with model_choice=%s", model_choice)
     start_time = time.time()
     
     # Retrieve conversation history (compact for cloud model to reduce latency)
-    if model_choice == "gemini":
-        history_context = memory_service.get_context_string(**GEMINI_STRICT_CONTEXT_PROFILE)
+    if model_choice == "openrouter":
+        history_context = memory_service.get_context_string(**OPENROUTER_STRICT_CONTEXT_PROFILE)
     else:
         history_context = memory_service.get_context_string()
 
     # 1. So khớp câu hỏi với bộ qa_presets.json thông qua Semantic Router
     semantic_router.reload_presets()
     preset_answer = None
-    if model_choice != "gemini" or GEMINI_USE_SEMANTIC_PRESET:
+    if model_choice != "openrouter" or OPENROUTER_USE_SEMANTIC_PRESET:
         preset_answer = semantic_router.get_best_match(normalized_message)
     
     if preset_answer:

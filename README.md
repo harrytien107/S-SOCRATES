@@ -5,7 +5,7 @@
 Dự án bao gồm 3 thành phần chính:
 - **Operator Console (Web UI)**: Tổng đài theo dõi và điều phối AI, duyệt câu trả lời, can thiệp cảm xúc Robot.
 - **Robot App (Flutter)**: Ứng dụng chạy trên thiết bị vật lý (Robot/Tablet) hiển thị giao diện 3D Orb cảm xúc và phát/thu âm.
-- **FastAPI Backend**: Xử lý logic AI (Gemini/Ollama), quản lý kết nối WebSocket, STT (Deepgram) và TTS (Google Cloud).
+- **FastAPI Backend**: Xử lý logic AI (OpenRouter/Local LLM), quản lý kết nối WebSocket, STT (Deepgram) và TTS (Google Cloud).
 
 ---
 
@@ -13,7 +13,7 @@ Dự án bao gồm 3 thành phần chính:
 - ⚡ **Dual-Streaming WebSockets**: Giao tiếp 2 chiều Full-Duplex giữa Operator, Backend và Robot. Dẹp bỏ hoàn toàn độ trễ của cơ chế HTTP Polling cũ.
 - ⚡ **Chunked TTS (Sentence-level)**: Chuyển đổi văn bản thành giọng nói và phát (stream) theo từng câu thay vì đợi xử lý toàn bộ đoạn văn. Tốc độ nói của Robot gần như tức thời (Sub-second latency).
 - 🎙️ **Live STT (Deepgram)**: Thu âm và bóc băng theo thời gian thực (Interim/Final words) với tốc độ chớp nhoáng.
-- 🧠 **Cơ chế 2 AI Engine**: Tự động chuyển đổi giữa **Gemini 2.5 Flash** (hỗ trợ stream siêu nhanh) và **Ollama Qwen2** (để chạy Local Offline).
+- 🧠 **Cơ chế 2 AI Engine**: Tự động chuyển đổi giữa **Cloud model qua OpenRouter** (hỗ trợ stream siêu nhanh) và **Ollama Qwen2** (để chạy Local Offline).
 - 🎭 **Sync Audio & UI Animation**: Đồng bộ hoàn toàn khẩu hình hình ảnh 3D Orb (Speaking, Challenge, No Voice) với từng tệp âm thanh đang phát, không kẹt Subtitle đi trước Audio.
 
 ---
@@ -26,7 +26,7 @@ graph TD;
     Robot(Robot App - Flutter) <== WebSocket (Audio Chunks & Emotions) ==> Backend
     
     Backend --> STT(Deepgram STT Streaming)
-    Backend --> AI(Gemini 2.5 Flash / Ollama)
+    Backend --> AI(OpenRouter / Ollama)
     Backend --> TTS(Google Cloud TTS)
 ```
 
@@ -41,7 +41,7 @@ graph TD;
 
 ## 🚀 Hướng dẫn cài đặt & Khởi chạy (Quick Start)
 
-Yêu cầu phần mềm: Python `>= 3.10`, Flutter SDK `>= 3.24`. Cần có API Keys của Gemini (AI Studio), Deepgram, và Google Cloud Console. Cấu hình file `.env` ở thư mục `S-SOCRATES-BE/`.
+Yêu cầu phần mềm: Python `>= 3.10`, Flutter SDK `>= 3.24`. Cần có API Keys của OpenRouter, Deepgram, và Google Cloud Console. Cấu hình file `.env` ở thư mục `S-SOCRATES-BE/`.
 
 Khởi chạy bằng 3 Terminal riêng biệt:
 
@@ -75,11 +75,11 @@ Thay vì dùng HTTP tĩnh, bạn nên mở Web Operator thông qua server uvicor
 
 **Các tính năng trên giao diện điều phối:**
 - **Nguồn Âm Thanh:** Chọn thu âm vào từ Laptop của Đạo diễn hoặc từ Mic của Robot.
-- **AI Trực Tiếp:** Bắn thẳng luồng ngữ cảnh cho Gemini trả lời tự động.
+- **AI Trực Tiếp:** Bắn thẳng luồng ngữ cảnh cho OpenRouter trả lời tự động.
 - **AI Duyệt Trước:** Tuỳ chọn text, sửa lỗi, và gán Emoji ngữ điệu (Speaking, Challenge) trước khi cho Robot đọc TTS.
 
 ---
 
 ## 🔒 Bảo mật
-- Tuyệt đối **KHÔNG** push file `.env` chứa `GEMINI_API_KEY`, `DEEPGRAM_API_KEY` cũng như file `credentials.json` của Google Cloud lên public Github.
+- Tuyệt đối **KHÔNG** push file `.env` chứa `OPENROUTER_API_KEY`, `DEEPGRAM_API_KEY` cũng như file `credentials.json` của Google Cloud lên public Github.
 - Dự án sử dụng WebSocket nội bộ không mã hoá, nếu deploy lên server công cộng cần bọc TLS qua Nginx (chuyển sang WSS).

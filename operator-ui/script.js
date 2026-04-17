@@ -487,7 +487,7 @@ async function saveSettings() {
                 tts_speed: parseFloat(document.getElementById('cfg-tts-speed').value),
                 stt_model: document.getElementById('cfg-stt-model').value,
                 stt_language: document.getElementById('cfg-stt-language').value,
-                gemini_model: document.getElementById('cfg-gemini-model').value,
+                openrouter_model: document.getElementById('cfg-openrouter-model').value,
                 auto_gain: document.getElementById('cfg-auto-gain').checked,
                 noise_suppression: document.getElementById('cfg-noise-supp').checked,
             })
@@ -530,9 +530,11 @@ async function syncConfigs() {
         const langEl = document.getElementById('cfg-stt-language');
         if (langEl) langEl.value = cfg.stt_language;
 
-        // Sync Gemini Model
-        const geminiEl = document.getElementById('cfg-gemini-model');
-        if (geminiEl) geminiEl.value = cfg.gemini_model;
+        // Sync OpenRouter Model
+        const openrouterEl = document.getElementById('cfg-openrouter-model');
+        if (openrouterEl) {
+            openrouterEl.value = cfg.openrouter_model;
+        }
 
         addLog("🔧 Synced audio config from backend.");
     } catch (err) {
@@ -749,7 +751,7 @@ async function useAI() {
     }
 }
 
-async function useGemini() {
+async function useOpenRouter() {
     const base = window.location.origin;
     const transcript = getTranscriptText();
     if (!transcript) {
@@ -757,11 +759,11 @@ async function useGemini() {
         return;
     }
     
-    const btn = document.querySelector('.gemini-btn');
+    const btn = document.querySelector('.openrouter-btn');
     const originalText = btn.innerHTML;
-    btn.innerHTML = '<span>⏳ GEMINI...</span>';
+    btn.innerHTML = '<span>⏳ OPENROUTER...</span>';
     btn.disabled = true;
-    statusMessage("Generating Gemini response...");
+    statusMessage("Generating OpenRouter response...");
 
     // Đưa robot vào trạng thái uploading khi đang chờ
     triggerEmotionAction('uploading', document.querySelector('.emotion-btn[data-emotion="uploading"]'));
@@ -771,7 +773,7 @@ async function useGemini() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                mode: 'gemini',
+                mode: 'openrouter',
                 transcript: transcript
             })
         });
@@ -779,11 +781,11 @@ async function useGemini() {
         if (result.error) throw new Error(result.error);
         
         setFinalPreviewText(result.text);
-        addLog("💎 Gemini response generated. Ready to send.");
+        addLog("🌐 OpenRouter response generated. Ready to send.");
     } catch (err) {
-        const detail = err?.message || 'Gemini request failed.';
-        addLog(`💎 Gemini Failed: ${detail}`);
-        statusMessage(`Gemini failed: ${detail}`, "error");
+        const detail = err?.message || 'OpenRouter request failed.';
+        addLog(`🌐 OpenRouter Failed: ${detail}`);
+        statusMessage(`OpenRouter failed: ${detail}`, "error");
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;
@@ -978,9 +980,9 @@ function stopLiveTranscribe() {
 }
 
 // =========================
-// GEMINI STREAMING (AI TRỰC TIẾP)
+// OPENROUTER STREAMING (AI TRỰC TIẾP)
 // =========================
-async function useGeminiStream() {
+async function useOpenRouterStream() {
     const base = window.location.origin;
 
     // Lấy transcript từ mọi nguồn có thể
@@ -1002,28 +1004,28 @@ async function useGeminiStream() {
         return;
     }
 
-    const btn = document.querySelector('[onclick="useGeminiStream()"]');
+    const btn = document.querySelector('[onclick="useOpenRouterStream()"]');
     const originalText = btn.innerHTML;
     btn.innerHTML = '<span>⏳ STREAMING...</span>';
     btn.disabled = true;
-    statusMessage('⚡ AI đang trả lời trực tiếp...');
+    statusMessage('⚡ OpenRouter đang trả lời trực tiếp...');
 
     try {
         const response = await fetch(`${base}/operator-decision/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ transcript: transcript, mode: 'gemini' })
+            body: JSON.stringify({ transcript: transcript, mode: 'openrouter' })
         });
         const result = await response.json();
         if (result.error) throw new Error(result.error);
 
         setFinalPreviewText(result.text);
         setEmotion('speaking', document.querySelector('.emotion-btn[data-emotion="speaking"]'), false);
-        addLog(`⚡ AI Trực Tiếp hoàn tất: ${result.chunks} chunks`);
-        statusMessage(`AI Stream done! (${result.chunks} chunks)`, 'success');
+        addLog(`⚡ OpenRouter stream hoàn tất: ${result.chunks} chunks`);
+        statusMessage(`OpenRouter stream done! (${result.chunks} chunks)`, 'success');
     } catch (err) {
-        addLog(`⚡ AI Stream Failed: ${err.message}`);
-        statusMessage('AI Stream Failed', 'error');
+        addLog(`⚡ OpenRouter Stream Failed: ${err.message}`);
+        statusMessage('OpenRouter Stream Failed', 'error');
     } finally {
         btn.innerHTML = originalText;
         btn.disabled = false;

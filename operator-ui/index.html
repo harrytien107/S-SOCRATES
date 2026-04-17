@@ -41,13 +41,13 @@
                     <button class="ai-reflex-btn" onclick="useAI()" style="flex: 1;">
                         <span>🦙 AI (OLLAMA / QWEN)</span>
                     </button>
-                    <button class="ai-reflex-btn gemini-btn" onclick="useGemini()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
-                        <span>💎 AI (GEMINI CLOUD)</span>
+                    <button class="ai-reflex-btn openrouter-btn" onclick="useOpenRouter()" style="flex: 1; background: linear-gradient(135deg, #4285f4, #8b5cf6); border: 1px solid rgba(139, 92, 246, 0.4);">
+                        <span>🌐 AI (OPENROUTER)</span>
                     </button>
                 </div>
                 <div style="display: flex; gap: 8px;">
-                    <button class="ai-reflex-btn" onclick="useGeminiStream()" style="flex: 1; background: linear-gradient(135deg, #ef4444, #f97316); border: 1px solid rgba(239, 68, 68, 0.4); font-size: 0.65rem;">
-                        <span>⚡ GEMINI TRỰC TIẾP (Stream)</span>
+                    <button class="ai-reflex-btn" onclick="useOpenRouterStream()" style="flex: 1; background: linear-gradient(135deg, #ef4444, #f97316); border: 1px solid rgba(239, 68, 68, 0.4); font-size: 0.65rem;">
+                        <span>⚡ OPENROUTER TRỰC TIẾP (Stream)</span>
                     </button>
                 </div>
             </div>
@@ -218,15 +218,15 @@
             <div class="settings-section">
                 <div class="settings-section-title llm">🧠 LLM ENGINE PARAMETERS</div>
                 
-                <!-- Gemini Model -->
+                <!-- OpenRouter Model -->
                 <div class="input-group">
-                    <label>💎 GEMINI MODEL</label>
-                    <select id="cfg-gemini-model" class="ui-select">
-                        <option value="models/gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-                        <option value="models/gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                        <option value="models/gemini-2.5-pro">Gemini 2.5 Pro</option>
-                        <option value="models/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                        <option value="models/gemini-2.0-flash" selected>Gemini 2.0 Flash</option>
+                    <label>🌐 OPENROUTER MODEL</label>
+                    <select id="cfg-openrouter-model" class="ui-select">
+                        <option value="google/gemini-2.0-flash-001" selected>Google Gemini 2.0 Flash (via OpenRouter)</option>
+                        <option value="google/gemini-2.5-flash-preview">Google Gemini 2.5 Flash Preview (via OpenRouter)</option>
+                        <option value="openai/gpt-4o-mini">OpenAI GPT-4o Mini</option>
+                        <option value="deepseek/deepseek-chat-v3-0324:free">DeepSeek Chat V3 (free)</option>
+                        <option value="meta-llama/llama-3.1-8b-instruct:free">Llama 3.1 8B Instruct (free)</option>
                     </select>
                 </div>
             </div>

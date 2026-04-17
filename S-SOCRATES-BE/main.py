@@ -17,16 +17,16 @@ from services.chat_orchestrator import process_chat_message
 from services.tts_service import process_tts_request, CHIRP3_HD_VOICES
 from services.semantic_router import semantic_router
 from services.llm_service import (
-    AVAILABLE_GEMINI_MODELS,
+    AVAILABLE_OPENROUTER_MODELS,
     get_local_backend_status,
     initialize_local_backend,
     shutdown_local_backend,
-    switch_gemini_model,
+    switch_openrouter_model,
 )
 from services.memory_service import memory_service
 from services.streaming_stt_service import StreamingSTTSession
 from services.streaming_tts_service import synthesize_sentence, split_into_sentences
-from services.llm_streaming_service import stream_gemini_sentences
+from services.llm_streaming_service import stream_openrouter_sentences
 from utils.logger import log
 
 # =========================
@@ -74,7 +74,7 @@ class ChatRequest(BaseModel):
     message: str
 
 class DecisionRequest(BaseModel):
-    mode: str  # "preset", "ai" (Ollama), or "gemini"
+    mode: str  # "preset", "ai" (local), or "openrouter"
     selected_answer: str | None = None
     transcript: str | None = None
 
@@ -91,7 +91,7 @@ class AudioConfigRequest(BaseModel):
     tts_speed: float = 1.0
     stt_model: str = "nova-2"
     stt_language: str = "vi"
-    gemini_model: str = "models/gemini-2.0-flash"
+    openrouter_model: str = "google/gemini-2.0-flash-001"
     auto_gain: bool = True
     noise_suppression: bool = True
 
@@ -111,7 +111,7 @@ GLOBAL_AUDIO_CONFIG = {
     "tts_speed": 1.0,
     "stt_model": "nova-2",
     "stt_language": "vi",
-    "gemini_model": "models/gemini-2.0-flash",
+    "openrouter_model": "google/gemini-2.0-flash-001",
     "auto_gain": True,
     "noise_suppression": True,
 }
@@ -190,7 +190,7 @@ async def get_configs():
             {"code": "ja", "label": "日本語"},
             {"code": "zh", "label": "中文"},
         ],
-        "available_gemini_models": AVAILABLE_GEMINI_MODELS,
+        "available_openrouter_models": AVAILABLE_OPENROUTER_MODELS,
     }
 
 @app.post("/configs")
@@ -199,12 +199,13 @@ async def update_configs(req: AudioConfigRequest):
     GLOBAL_AUDIO_CONFIG["tts_speed"] = max(0.25, min(2.0, req.tts_speed))
     GLOBAL_AUDIO_CONFIG["stt_model"] = req.stt_model
     GLOBAL_AUDIO_CONFIG["stt_language"] = req.stt_language
-    GLOBAL_AUDIO_CONFIG["gemini_model"] = req.gemini_model
+    selected_cloud_model = (req.openrouter_model or GLOBAL_AUDIO_CONFIG["openrouter_model"]).strip()
+    GLOBAL_AUDIO_CONFIG["openrouter_model"] = selected_cloud_model
     GLOBAL_AUDIO_CONFIG["auto_gain"] = req.auto_gain
     GLOBAL_AUDIO_CONFIG["noise_suppression"] = req.noise_suppression
     
-    # Hot-swap Gemini model nếu thay đổi
-    switch_gemini_model(req.gemini_model)
+    # Hot-swap OpenRouter model nếu thay đổi
+    switch_openrouter_model(selected_cloud_model)
     
     # Báo cho Robot App update config Micro
     await robot_ws_manager.broadcast({
@@ -445,8 +446,8 @@ async def operator_decision(req: DecisionRequest):
         elif req.mode == "ai":
             text = await run_in_threadpool(process_chat_message, user_text, "ollama")
             emotion = "speaking"
-        elif req.mode == "gemini":
-            text = await run_in_threadpool(process_chat_message, user_text, "gemini")
+        elif req.mode == "openrouter":
+            text = await run_in_threadpool(process_chat_message, user_text, "openrouter")
             emotion = "speaking"
         else:
             return {"error": "Invalid mode"}
@@ -574,12 +575,12 @@ async def get_full_streaming_transcript():
 
 class StreamDecisionRequest(BaseModel):
     transcript: str
-    mode: str = "gemini"  # "gemini" hoặc "ollama"
+    mode: str = "openrouter"  # "openrouter" hoặc "ollama"
 
 @app.post("/operator-decision/stream")
 async def operator_decision_stream(req: StreamDecisionRequest):
     """
-    AI Trực Tiếp: Gemini stream → cắt câu → TTS từng câu → push audio chunks xuống Robot.
+    AI Trực Tiếp: OpenRouter stream → cắt câu → TTS từng câu → push audio chunks xuống Robot.
     Robot nói câu đầu tiên chỉ trong ~1 giây.
     """
     global _latest_robot_command, _tts_chunk_buffer
@@ -605,10 +606,10 @@ Câu hỏi hiện tại:
 
     full_response = ""
     chunk_index = 0
-    model_name = GLOBAL_AUDIO_CONFIG["gemini_model"]
+    model_name = GLOBAL_AUDIO_CONFIG["openrouter_model"]
 
     try:
-        async for sentence in stream_gemini_sentences(prompt, model_name):
+        async for sentence in stream_openrouter_sentences(prompt, model_name):
             full_response += sentence + " "
 
             # Dịch câu này sang audio ngay lập tức

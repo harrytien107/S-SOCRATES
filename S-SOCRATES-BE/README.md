@@ -73,7 +73,7 @@ Docs: `http://localhost:8000/docs`
 Tùy cấu hình service, bạn có thể cần:
 
 - `DEEPGRAM_API_KEY`
-- `GEMINI_API_KEY`
+- `OPENROUTER_API_KEY`
 
 ### Local LLM: chọn `ollama` hoặc `turboquant`
 
@@ -119,7 +119,7 @@ TURBOQUANT_CTX=8192
 
 Lưu ý:
 
-- Gemini giữ nguyên luồng cũ và không phụ thuộc local backend.
+- Cloud model chạy qua OpenRouter và không phụ thuộc local backend.
 - `model_choice="ollama"` trong code hiện tại vẫn được giữ nguyên để tương thích API, nhưng thực tế nó sẽ route sang local backend đã chọn trong `.env`.
 - Với TurboQuant, backend không tải lại model; nó dùng trực tiếp file GGUF đã có sẵn tại `LOCAL_LLM_GGUF_PATH`.
 

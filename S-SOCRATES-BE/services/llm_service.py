@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import subprocess
 import threading
@@ -14,6 +15,7 @@ from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
 from llama_index.core.settings import Settings
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.ollama import Ollama
+import requests
 
 from utils.logger import log
 
@@ -31,21 +33,27 @@ def _read_bool_env(name: str, default: bool) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
-GEMINI_TIMEOUT_S = float(os.getenv("GEMINI_TIMEOUT_S", "12"))
-GEMINI_FALLBACK_LOCAL_ON_TIMEOUT = _read_bool_env(
-    "GEMINI_FALLBACK_LOCAL_ON_TIMEOUT", False
+OPENROUTER_API_BASE = os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1").strip()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_TIMEOUT_S = float(os.getenv("OPENROUTER_TIMEOUT_S", "20"))
+OPENROUTER_TEMPERATURE = float(os.getenv("OPENROUTER_TEMPERATURE", "0.3"))
+OPENROUTER_MAX_TOKENS = int(os.getenv("OPENROUTER_MAX_TOKENS", "300"))
+OPENROUTER_FALLBACK_LOCAL_ON_TIMEOUT = _read_bool_env(
+    "OPENROUTER_FALLBACK_LOCAL_ON_TIMEOUT", False
 )
-GEMINI_FALLBACK_LOCAL_ON_QUOTA = _read_bool_env(
-    "GEMINI_FALLBACK_LOCAL_ON_QUOTA", False
+OPENROUTER_FALLBACK_LOCAL_ON_QUOTA = _read_bool_env(
+    "OPENROUTER_FALLBACK_LOCAL_ON_QUOTA", False
 )
-_gemini_timeout_executor = ThreadPoolExecutor(max_workers=2)
+OPENROUTER_USE_RETRIEVAL = _read_bool_env("OPENROUTER_USE_RETRIEVAL", False)
+OPENROUTER_HTTP_REFERER = os.getenv("OPENROUTER_HTTP_REFERER", "").strip()
+OPENROUTER_APP_NAME = os.getenv("OPENROUTER_APP_NAME", "S-SOCRATES").strip()
+_cloud_timeout_executor = ThreadPoolExecutor(max_workers=2)
 STRICT_PROMPT_MODE = _read_bool_env("STRICT_PROMPT_MODE", True)
 STRICT_MAX_SENTENCES = int(os.getenv("STRICT_MAX_SENTENCES", "3"))
 STRICT_MAX_WORDS = int(os.getenv("STRICT_MAX_WORDS", "60"))
 STRICT_FORCE_POLITE_PREFIX = _read_bool_env("STRICT_FORCE_POLITE_PREFIX", True)
-GEMINI_USE_RETRIEVAL = _read_bool_env("GEMINI_USE_RETRIEVAL", False)
 
-STRICT_GEMINI_SUFFIX = """
+STRICT_CLOUD_SUFFIX = """
 YEU CAU BAT BUOC BAM PROMPT:
 - Tuân thủ tuyệt đối PERSONA + OUTPUT RULES trong SYSTEM_PROMPT.
 - Luôn xưng 'em', xưng hô lễ phép với 'Giáo sư' hoặc 'Tiến sĩ'.
@@ -429,88 +437,166 @@ def get_local_backend_status() -> dict:
 
 
 # =========================
-# Gemini (Cloud) - Dynamic Model
+# OpenRouter (Cloud) - Dynamic Model
 # =========================
 
-_gemini_engine = None
-_gemini_llm = None
-_current_gemini_model = None
+_openrouter_query_engine = None
+_current_openrouter_model = None
 
-AVAILABLE_GEMINI_MODELS = [
-    "models/gemini-3.1-pro-preview",
-    "models/gemini-3-flash-preview",
-    "models/gemini-2.5-pro",
-    "models/gemini-2.5-flash",
-    "models/gemini-2.0-flash",
+DEFAULT_OPENROUTER_MODELS = [
+    "google/gemini-2.0-flash-001",
+    "google/gemini-2.5-flash-preview",
+    "openai/gpt-4o-mini",
+    "deepseek/deepseek-chat-v3-0324:free",
+    "meta-llama/llama-3.1-8b-instruct:free",
 ]
 
-def _init_gemini_engine(model_name: str = "models/gemini-2.5-flash"):
-    global _gemini_engine, _gemini_llm, _current_gemini_model
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        log.warning("⚠️ GEMINI_API_KEY not found in .env. Gemini engine disabled.")
-        _gemini_engine = None
-        _gemini_llm = None
+
+def _load_openrouter_models() -> list[str]:
+    raw = os.getenv("OPENROUTER_MODELS", "").strip()
+    if raw:
+        parsed = [item.strip() for item in raw.split(",") if item.strip()]
+        if parsed:
+            return parsed
+    return DEFAULT_OPENROUTER_MODELS
+
+
+AVAILABLE_OPENROUTER_MODELS = _load_openrouter_models()
+
+
+def _openrouter_headers() -> dict:
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    if OPENROUTER_HTTP_REFERER:
+        headers["HTTP-Referer"] = OPENROUTER_HTTP_REFERER
+    if OPENROUTER_APP_NAME:
+        headers["X-Title"] = OPENROUTER_APP_NAME
+    return headers
+
+
+def _build_openrouter_query_engine(model_name: str):
+    from llama_index.llms.openai_like import OpenAILike
+
+    llm = OpenAILike(
+        model=model_name,
+        api_base=OPENROUTER_API_BASE,
+        api_key=OPENROUTER_API_KEY,
+        is_chat_model=True,
+        is_function_calling_model=False,
+        timeout=OPENROUTER_TIMEOUT_S,
+        max_tokens=OPENROUTER_MAX_TOKENS,
+        temperature=OPENROUTER_TEMPERATURE,
+    )
+    return _index.as_query_engine(llm=llm)
+
+
+def _init_openrouter_model(model_name: str | None = None):
+    global _openrouter_query_engine, _current_openrouter_model
+
+    target_model = model_name or (AVAILABLE_OPENROUTER_MODELS[0] if AVAILABLE_OPENROUTER_MODELS else "")
+    _current_openrouter_model = target_model
+
+    if not OPENROUTER_API_KEY:
+        _openrouter_query_engine = None
+        log.warning("⚠️ OPENROUTER_API_KEY not found in .env. OpenRouter cloud mode disabled.")
         return
 
     try:
-        from llama_index.llms.gemini import Gemini
-
-        llm = Gemini(
-            model=model_name,
-            api_key=api_key,
-        )
-        _gemini_llm = llm
-        _gemini_engine = _index.as_query_engine(llm=llm)
-        _current_gemini_model = model_name
+        if OPENROUTER_USE_RETRIEVAL:
+            _openrouter_query_engine = _build_openrouter_query_engine(target_model)
+        else:
+            _openrouter_query_engine = None
         log.info(
-            "✅ Gemini initialized (%s). retrieval=%s",
-            model_name,
-            GEMINI_USE_RETRIEVAL,
+            "✅ OpenRouter initialized (%s). retrieval=%s",
+            target_model,
+            OPENROUTER_USE_RETRIEVAL,
         )
     except Exception as exc:
-        log.error(f"❌ Failed to initialize Gemini engine: {exc}")
-        _gemini_engine = None
-        _gemini_llm = None
+        log.error("❌ Failed to initialize OpenRouter engine: %s", exc)
+        _openrouter_query_engine = None
 
 
-_init_gemini_engine()
+_init_openrouter_model()
 
 
-def switch_gemini_model(model_name: str):
-    global _current_gemini_model
-    if model_name == _current_gemini_model:
+def switch_openrouter_model(model_name: str):
+    global _current_openrouter_model
+    if model_name == _current_openrouter_model:
         return
-    log.info(f"🔄 Switching Gemini model: {_current_gemini_model} → {model_name}")
-    _init_gemini_engine(model_name)
+    log.info("🔄 Switching OpenRouter model: %s → %s", _current_openrouter_model, model_name)
+    _init_openrouter_model(model_name)
 
 
-def _query_gemini_with_timeout(prompt: str):
-    if GEMINI_USE_RETRIEVAL:
-        if _gemini_engine is None:
-            raise RuntimeError("Gemini query engine is not initialized")
-        query_fn = _gemini_engine.query
+def _openrouter_complete_text(prompt: str) -> str:
+    if not OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY is not configured.")
+    if not _current_openrouter_model:
+        raise RuntimeError("No OpenRouter model configured.")
+
+    url = f"{OPENROUTER_API_BASE.rstrip('/')}/chat/completions"
+    payload = {
+        "model": _current_openrouter_model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": OPENROUTER_TEMPERATURE,
+        "max_tokens": OPENROUTER_MAX_TOKENS,
+    }
+
+    timeout = OPENROUTER_TIMEOUT_S if OPENROUTER_TIMEOUT_S > 0 else None
+    resp = requests.post(
+        url,
+        headers=_openrouter_headers(),
+        json=payload,
+        timeout=timeout,
+    )
+
+    if resp.status_code >= 400:
+        detail = resp.text
+        try:
+            body = resp.json()
+            detail = body.get("error", {}).get("message") or body.get("message") or detail
+        except Exception:
+            pass
+        if resp.status_code == 429:
+            raise RuntimeError(f"OPENROUTER_QUOTA_EXCEEDED: {detail}")
+        raise RuntimeError(f"OpenRouter HTTP {resp.status_code}: {detail}")
+
+    data = resp.json()
+    choices = data.get("choices") or []
+    if not choices:
+        raise RuntimeError("OpenRouter response has no choices.")
+
+    content = ((choices[0] or {}).get("message") or {}).get("content", "")
+    if not content:
+        raise RuntimeError("OpenRouter response content is empty.")
+    return str(content)
+
+
+def _query_openrouter_with_timeout(prompt: str):
+    if OPENROUTER_USE_RETRIEVAL:
+        if _openrouter_query_engine is None:
+            raise RuntimeError("OpenRouter retrieval engine is not initialized")
+        query_fn = _openrouter_query_engine.query
     else:
-        if _gemini_llm is None:
-            raise RuntimeError("Gemini LLM is not initialized")
-        query_fn = _gemini_llm.complete
+        query_fn = _openrouter_complete_text
 
-    if GEMINI_TIMEOUT_S <= 0:
+    if OPENROUTER_TIMEOUT_S <= 0:
         return query_fn(prompt)
 
-    future = _gemini_timeout_executor.submit(query_fn, prompt)
+    future = _cloud_timeout_executor.submit(query_fn, prompt)
     try:
-        return future.result(timeout=GEMINI_TIMEOUT_S)
+        return future.result(timeout=OPENROUTER_TIMEOUT_S)
     except FuturesTimeoutError as exc:
         future.cancel()
-        if GEMINI_FALLBACK_LOCAL_ON_TIMEOUT:
+        if OPENROUTER_FALLBACK_LOCAL_ON_TIMEOUT:
             log.warning(
-                "⏱️ Gemini timeout after %.1fs, fallback to local backend.",
-                GEMINI_TIMEOUT_S,
+                "⏱️ OpenRouter timeout after %.1fs, fallback to local backend.",
+                OPENROUTER_TIMEOUT_S,
             )
             return _get_local_query_engine().query(prompt)
         raise RuntimeError(
-            f"Gemini timed out after {GEMINI_TIMEOUT_S:.1f}s."
+            f"OpenRouter timed out after {OPENROUTER_TIMEOUT_S:.1f}s."
         ) from exc
 
 
@@ -519,6 +605,11 @@ def _query_gemini_with_timeout(prompt: str):
 # =========================
 
 def ask_socrates(user_message: str, history_context: str = "", model_choice: str = "ollama") -> str:
+    if model_choice not in {"ollama", "openrouter"}:
+        raise ValueError(
+            f"Unsupported model_choice '{model_choice}'. Expected one of: ollama, openrouter."
+        )
+
     base_prompt = f"""{SYSTEM_PROMPT}
 
 {history_context}
@@ -526,45 +617,56 @@ Câu hỏi hiện tại:
 {user_message}
 """
 
-    if model_choice == "gemini":
+    cloud_mode = model_choice == "openrouter"
+
+    if cloud_mode:
         prompt = (
             base_prompt
             + "\n"
-            + STRICT_GEMINI_SUFFIX
+            + STRICT_CLOUD_SUFFIX
         )
     else:
         prompt = base_prompt
 
-    if model_choice == "gemini":
-        if _gemini_engine is None:
+    if cloud_mode:
+        if not OPENROUTER_API_KEY:
             raise RuntimeError(
-                "Gemini engine is not available. "
-                "Please verify GEMINI_API_KEY and the selected Gemini model."
+                "OpenRouter API key is missing. Please set OPENROUTER_API_KEY in .env."
             )
-        else:
-            log.info(f"🧠 Routing to Gemini (Cloud) [{_current_gemini_model}]...")
-            try:
-                response = _query_gemini_with_timeout(prompt)
-            except Exception as exc:
-                error_type = exc.__class__.__name__
-                error_text = str(exc)
-                if error_type == "ResourceExhausted" or "RESOURCE_EXHAUSTED" in error_text:
-                    if GEMINI_FALLBACK_LOCAL_ON_QUOTA:
-                        log.warning(
-                            "Gemini quota exhausted, falling back to local backend while keeping strict output formatting."
-                        )
-                        try:
-                            response = _get_local_query_engine().query(base_prompt)
-                        except Exception as local_exc:
-                            raise RuntimeError(
-                                f"Gemini quota exceeded and local fallback failed: {local_exc}"
-                            ) from local_exc
-                        return _enforce_socrates_style(_extract_response_text(response))
-                    raise RuntimeError(
-                        "Gemini quota exceeded for the current API key/project. "
-                        "Please wait and retry, or switch to AI mode to use local backend."
-                    ) from exc
-                raise RuntimeError(f"Gemini request failed: {error_text}") from exc
+        if not _current_openrouter_model:
+            _init_openrouter_model()
+
+        log.info("🧠 Routing to OpenRouter (Cloud) [%s]...", _current_openrouter_model)
+        try:
+            response = _query_openrouter_with_timeout(prompt)
+        except Exception as exc:
+            error_text = str(exc)
+            lower_error = error_text.lower()
+            quota_like = (
+                "openrouter_quota_exceeded" in lower_error
+                or "429" in lower_error
+                or "quota" in lower_error
+                or "rate limit" in lower_error
+            )
+            if quota_like:
+                if OPENROUTER_FALLBACK_LOCAL_ON_QUOTA:
+                    log.warning(
+                        "OpenRouter quota exhausted, falling back to local backend while keeping strict output formatting."
+                    )
+                    try:
+                        response = _get_local_query_engine().query(base_prompt)
+                    except Exception as local_exc:
+                        raise RuntimeError(
+                            f"OpenRouter quota exceeded and local fallback failed: {local_exc}"
+                        ) from local_exc
+                    return _enforce_socrates_style(_extract_response_text(response))
+
+                raise RuntimeError(
+                    "OpenRouter quota/rate limit exceeded for current API key. "
+                    "Please retry later, switch model, or use AI mode (local backend)."
+                ) from exc
+
+            raise RuntimeError(f"OpenRouter request failed: {error_text}") from exc
     else:
         local_status = get_local_backend_status()
         log.info(
