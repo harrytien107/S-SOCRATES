@@ -1,5 +1,5 @@
 let currentData = null;
-let selectedEmotion = 'idle';
+let selectedEmotion = 'neutral';
 let lastLogMsg = "";
 let hasReceivedDeepgramData = false; // Track xem đã nhận dữ liệu từ Deepgram chưa
 let selectedAiInputSource = 'deepgram';
@@ -159,7 +159,9 @@ async function syncLocalRuntimeStatus() {
 }
 
 function normalizeEmotion(emo) {
-    return emo === 'neutral' ? 'idle' : emo;
+    const normalized = (emo || '').toString().trim().toLowerCase();
+    if (normalized === 'idle') return 'neutral';
+    return normalized;
 }
 
 function formatTimer(ms) {
@@ -227,6 +229,85 @@ async function quickSendEmotion(emo, btn) {
     }
 }
 
+async function postRobotCommand(payload) {
+    const base = getApiBase();
+    const response = await fetch(`${base}/send-to-robot`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+    });
+
+    const rawText = await response.text();
+    let result = {};
+    try {
+        result = rawText ? JSON.parse(rawText) : {};
+    } catch (_) {
+        result = { error: rawText || `HTTP ${response.status}` };
+    }
+
+    if (!response.ok || result.error) {
+        throw new Error(result.error || `HTTP ${response.status}`);
+    }
+
+    return result;
+}
+
+async function sendTtsToRobot(event, btn) {
+    consumeEvent(event);
+    const rawText = document.getElementById('final-preview').innerText.trim();
+    const triggerBtn = btn || document.getElementById('send-trigger');
+
+    if (!rawText) {
+        statusMessage('TTS cần nội dung để gửi', 'error');
+        return;
+    }
+
+    if (triggerBtn) triggerBtn.disabled = true;
+    setEmotion('speaking', triggerBtn, false);
+    statusMessage('Sending TTS to Robot...', 'normal');
+
+    try {
+        const result = await postRobotCommand({ text: rawText, emotion: 'speaking' });
+        if (!result.status) {
+            throw new Error('Queue failed');
+        }
+
+        setEmotion('neutral', document.querySelector('.emotion-btn[data-emotion="neutral"]'), false);
+        addLog('🔊 Đã gửi TTS đọc chữ tới Robot.');
+        statusMessage('Sent Successfully!', 'success');
+    } catch (err) {
+        addLog('✕ TTS Send Failed.');
+        statusMessage('Send Failed', 'error');
+        if (triggerBtn) triggerBtn.disabled = false;
+    } finally {
+        updateSendButton();
+    }
+}
+
+async function stopRobotTTS(event) {
+    consumeEvent(event);
+    const btn = document.getElementById('stop-tts-btn');
+
+    if (btn) btn.disabled = true;
+    statusMessage('Stopping TTS...', 'normal');
+
+    try {
+        const result = await postRobotCommand({ text: '', emotion: 'stop_tts' });
+        if (!result.status) {
+            throw new Error('Queue failed');
+        }
+
+        setEmotion('neutral', document.querySelector('.emotion-btn[data-emotion="neutral"]'), false);
+        addLog('🛑 Đã dừng TTS đang đọc.');
+        statusMessage('TTS stopped.', 'success');
+    } catch (err) {
+        addLog('⚠️ Không dừng được TTS.');
+        statusMessage('STOP TTS Failed', 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
 async function cancelRobotMic(event) {
     consumeEvent(event);
     if (!isMicActive) return;
@@ -255,7 +336,7 @@ async function startRobotMic(event) {
 
     isMicActive = true;
     updateMicButtons();
-    setEmotion('idle', null, false);
+    setEmotion('neutral', null, false);
     addLog(`🎙️ Đã gửi lệnh BẬT mic robot.`);
     statusMessage('Robot microphone started', 'success');
 }
@@ -520,7 +601,7 @@ function addLog(msg) {
     }
 }
 
-let _logExpanded = false;
+let _logExpanded = true;
 function toggleLogExpand() {
     _logExpanded = !_logExpanded;
     const container = document.getElementById('log-container');
@@ -641,7 +722,6 @@ async function saveSettings() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                robot_control_url: document.getElementById('robot-control-url').value.trim(),
                 tts_voice: document.getElementById('cfg-tts-voice').value,
                 tts_speed: parseFloat(document.getElementById('cfg-tts-speed').value),
                 stt_model: document.getElementById('cfg-stt-model').value,
@@ -667,9 +747,6 @@ async function syncConfigs() {
         const data = await res.json();
         const cfg = data.config;
         applyDeploymentMode(data);
-        const robotUrlEl = document.getElementById('robot-control-url');
-
-        if (robotUrlEl) robotUrlEl.value = data.robot_control_url || '';
 
         const voiceEl = document.getElementById('cfg-tts-voice');
         if (voiceEl) voiceEl.value = cfg.tts_voice;
@@ -804,19 +881,16 @@ function selectResponse(text, mode, element) {
 function updateSendButton() {
     const rawText = document.getElementById('final-preview').innerText.trim();
     const btn = document.getElementById('send-trigger');
-    const hasText = rawText.length > 0;
-    if (hasText && selectedEmotion === 'idle') {
-        setEmotion('speaking', null, false);
-        return;
-    }
-    const textRequired = selectedEmotion === 'speaking';
+    if (!btn) return;
 
-    btn.disabled = textRequired && !hasText;
-    if (btn.disabled) {
-        statusMessage("Speaking cần nội dung để gửi");
+    const hasText = rawText.length > 0;
+    btn.disabled = !hasText;
+    if (!hasText) {
+        statusMessage("TTS cần nội dung để gửi");
         return;
     }
-    statusMessage(textRequired ? "Ready to Send" : "Ready to Send (emotion only)");
+
+    statusMessage("Ready to Send TTS");
 }
 
 async function useAI() {

@@ -4,7 +4,6 @@ import os
 import time
 from pathlib import Path
 
-import httpx
 from dotenv import load_dotenv
 from fastapi import (
     BackgroundTasks,
@@ -20,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from services.chat_orchestrator import process_chat_message
+from services.gemini_service import gemini_service
 from services.llm_service import (
     AVAILABLE_GEMINI_MODELS,
     get_local_backend_status,
@@ -98,7 +98,51 @@ class ConnectionManager:
             self.disconnect(connection)
 
 
+class RobotConnectionManager:
+    def __init__(self):
+        self.active_connection: WebSocket | None = None
+        self._lock = asyncio.Lock()
+        self.last_seen_ns = 0
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        old_connection: WebSocket | None
+        async with self._lock:
+            old_connection = self.active_connection
+            self.active_connection = websocket
+            self.last_seen_ns = time.time_ns()
+
+        if old_connection and old_connection is not websocket:
+            try:
+                await old_connection.close(code=1000, reason="Replaced by a newer robot connection")
+            except Exception:
+                pass
+
+    def disconnect(self, websocket: WebSocket):
+        if self.active_connection is websocket:
+            self.active_connection = None
+
+    def is_connected(self) -> bool:
+        return self.active_connection is not None
+
+    def touch(self):
+        self.last_seen_ns = time.time_ns()
+
+    async def send_json(self, message: dict, timeout_seconds: float = 1.5):
+        connection = self.active_connection
+        if connection is None:
+            raise RuntimeError("Robot app is not connected via WebSocket.")
+
+        try:
+            await asyncio.wait_for(connection.send_json(message), timeout=timeout_seconds)
+            self.last_seen_ns = time.time_ns()
+        except Exception as exc:
+            self.disconnect(connection)
+            raise RuntimeError(f"Robot WebSocket send failed: {exc}") from exc
+
+
 ws_manager = ConnectionManager()
+robot_ws_manager = RobotConnectionManager()
 _local_runtime_warm_task: asyncio.Task | None = None
 
 
@@ -128,7 +172,6 @@ class AudioConfigRequest(BaseModel):
     stt_model: str = "nova-2"
     stt_language: str = "vi"
     gemini_model: str = "models/gemini-2.5-flash"
-    robot_control_url: str | None = None
 
 
 class RobotSyncRequest(BaseModel):
@@ -153,10 +196,27 @@ GLOBAL_AUDIO_CONFIG = {
     "stt_language": "vi",
     "gemini_model": "models/gemini-2.5-flash",
 }
-ROBOT_CONTROL_URL = os.getenv("ROBOT_CONTROL_URL", "http://192.168.1.6:9000").rstrip("/")
 _robot_mic_status = "idle"
+SETTINGS_PATH = Path(__file__).resolve().parent / "operator_settings.json"
 
 QA_PRESETS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "qa_presets.json")
+
+
+def load_operator_settings_from_disk():
+    if not SETTINGS_PATH.exists():
+        return None
+
+    try:
+        with open(SETTINGS_PATH, "r", encoding="utf-8") as file:
+            payload = json.load(file)
+    except Exception as exc:
+        log.warning("Could not load operator settings: %s", exc)
+        return None
+
+    if not isinstance(payload, dict):
+        return None
+
+    return payload
 
 
 def supports_local_ai() -> bool:
@@ -165,6 +225,79 @@ def supports_local_ai() -> bool:
 
 def supports_api_ai() -> bool:
     return DEPLOYMENT_MODE in {"hybrid", "api"}
+
+
+def _apply_audio_config(config: dict) -> None:
+    """Normalize + update GLOBAL_AUDIO_CONFIG in place from a dict payload."""
+    if not isinstance(config, dict):
+        return
+
+    GLOBAL_AUDIO_CONFIG["tts_voice"] = config.get("tts_voice", GLOBAL_AUDIO_CONFIG["tts_voice"])
+    try:
+        tts_speed = float(config.get("tts_speed", GLOBAL_AUDIO_CONFIG["tts_speed"]))
+    except (TypeError, ValueError):
+        tts_speed = GLOBAL_AUDIO_CONFIG["tts_speed"]
+    GLOBAL_AUDIO_CONFIG["tts_speed"] = max(0.25, min(2.0, tts_speed))
+    GLOBAL_AUDIO_CONFIG["stt_model"] = config.get("stt_model", GLOBAL_AUDIO_CONFIG["stt_model"])
+    GLOBAL_AUDIO_CONFIG["stt_language"] = config.get("stt_language", GLOBAL_AUDIO_CONFIG["stt_language"])
+    GLOBAL_AUDIO_CONFIG["gemini_model"] = config.get("gemini_model", GLOBAL_AUDIO_CONFIG["gemini_model"])
+
+
+def _activate_audio_config(*, source: str) -> None:
+    """Propagate GLOBAL_AUDIO_CONFIG to the downstream services (Gemini, ...).
+
+    Called both on boot (after loading operator_settings.json) and on every
+    `/configs` POST so the running backend actually mirrors the saved state
+    without requiring a manual "Save & Connect" click from the operator UI.
+    """
+    gemini_model = GLOBAL_AUDIO_CONFIG.get("gemini_model")
+    if supports_api_ai() and gemini_model:
+        try:
+            switch_gemini_model(gemini_model)
+            log.info(
+                "[settings:%s] Gemini active model = %s",
+                source,
+                gemini_service.current_model or gemini_model,
+            )
+        except Exception as exc:
+            log.warning("[settings:%s] Could not apply Gemini model %s: %s", source, gemini_model, exc)
+
+    log.info(
+        "[settings:%s] Audio config active: voice=%s speed=%sx stt=%s/%s gemini=%s",
+        source,
+        GLOBAL_AUDIO_CONFIG["tts_voice"],
+        GLOBAL_AUDIO_CONFIG["tts_speed"],
+        GLOBAL_AUDIO_CONFIG["stt_model"],
+        GLOBAL_AUDIO_CONFIG["stt_language"],
+        GLOBAL_AUDIO_CONFIG["gemini_model"],
+    )
+
+
+def apply_operator_settings(payload: dict, *, source: str = "disk") -> None:
+    if not isinstance(payload, dict):
+        return
+    config = payload.get("config")
+    _apply_audio_config(config if isinstance(config, dict) else {})
+    _activate_audio_config(source=source)
+
+
+def save_operator_settings_to_disk():
+    payload = {
+        "config": GLOBAL_AUDIO_CONFIG,
+    }
+
+    try:
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as file:
+            json.dump(payload, file, ensure_ascii=False, indent=2)
+    except Exception as exc:
+        log.warning("Could not save operator settings: %s", exc)
+
+
+persisted_settings = load_operator_settings_from_disk()
+if persisted_settings:
+    apply_operator_settings(persisted_settings, source="boot")
+else:
+    log.info("[settings:boot] No operator_settings.json found - using built-in defaults.")
 
 
 def build_local_runtime_payload() -> dict:
@@ -283,7 +416,7 @@ async def get_configs():
     return {
         "config": GLOBAL_AUDIO_CONFIG,
         "deployment_mode": DEPLOYMENT_MODE,
-        "robot_control_url": ROBOT_CONTROL_URL,
+        "robot_ws_connected": robot_ws_manager.is_connected(),
         "local_runtime": local_runtime,
         "local_llm": local_runtime,
         "retrieval": retrieval_stats,
@@ -307,17 +440,9 @@ async def get_local_runtime_status():
 
 @app.post("/configs")
 async def update_configs(req: AudioConfigRequest):
-    global ROBOT_CONTROL_URL
-    GLOBAL_AUDIO_CONFIG["tts_voice"] = req.tts_voice
-    GLOBAL_AUDIO_CONFIG["tts_speed"] = max(0.25, min(2.0, req.tts_speed))
-    GLOBAL_AUDIO_CONFIG["stt_model"] = req.stt_model
-    GLOBAL_AUDIO_CONFIG["stt_language"] = req.stt_language
-    GLOBAL_AUDIO_CONFIG["gemini_model"] = req.gemini_model
-    if req.robot_control_url:
-        ROBOT_CONTROL_URL = req.robot_control_url.rstrip("/")
-
-    if supports_api_ai():
-        switch_gemini_model(req.gemini_model)
+    _apply_audio_config(req.model_dump())
+    _activate_audio_config(source="post")
+    save_operator_settings_to_disk()
     return {"status": "Config updated", "config": GLOBAL_AUDIO_CONFIG}
 
 
@@ -329,13 +454,40 @@ async def rebuild_retrieval_index():
 
 
 async def dispatch_robot_request(path: str, payload: dict | None = None):
-    url = f"{ROBOT_CONTROL_URL}{path}"
-    async with httpx.AsyncClient(timeout=5.0) as client:
-        response = await client.post(url, json=payload or {})
-        response.raise_for_status()
-        if not response.content:
-            return {"status": "ok"}
-        return response.json()
+    payload = payload or {}
+
+    if path == "/mic":
+        action = str(payload.get("action", "")).strip().lower()
+        status_map = {
+            "start": "listening",
+            "stop": "processing",
+            "cancel": "canceled",
+        }
+        status = status_map.get(action)
+        if not status:
+            raise ValueError("Invalid mic action for robot dispatch.")
+
+        message = {
+            "type": "mic_status",
+            "status": status,
+            "timestamp": time.time_ns(),
+        }
+    elif path == "/command":
+        message = {
+            "type": "command",
+            "text": str(payload.get("text", "")).strip(),
+            "emotion": str(payload.get("emotion", "neutral")).strip().lower(),
+            "timestamp": time.time_ns(),
+        }
+    else:
+        raise ValueError(f"Unsupported robot dispatch path: {path}")
+
+    await robot_ws_manager.send_json(message)
+    return {
+        "status": "ok",
+        "transport": "websocket",
+        "message": message,
+    }
 
 
 @app.post("/robot/mic-control")
@@ -353,7 +505,7 @@ async def mic_control(req: MicControlRequest):
     try:
         robot_response = await dispatch_robot_request("/mic", {"action": req.action})
     except Exception as e:
-        return {"error": f"Failed to reach robot at {ROBOT_CONTROL_URL}: {e}"}
+        return {"error": f"Failed to dispatch mic action over WebSocket: {e}"}
 
     await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
     return {
@@ -412,6 +564,66 @@ async def websocket_operator(websocket: WebSocket):
         pass
     finally:
         ws_manager.disconnect(websocket)
+
+
+@app.websocket("/ws/robot")
+async def websocket_robot(websocket: WebSocket):
+    global _robot_mic_status
+
+    await robot_ws_manager.connect(websocket)
+    await ws_manager.broadcast({"type": "robot_connection", "status": "connected"})
+    try:
+        await websocket.send_json(
+            {
+                "type": "mic_status",
+                "status": _robot_mic_status,
+                "timestamp": time.time_ns(),
+            }
+        )
+
+        while True:
+            payload = await websocket.receive_json()
+            if not isinstance(payload, dict):
+                continue
+
+            robot_ws_manager.touch()
+            msg_type = str(payload.get("type", "")).strip().lower()
+
+            if msg_type == "manual_mic":
+                action = str(payload.get("action", "")).strip().lower()
+                if action == "start":
+                    _robot_mic_status = "listening"
+                elif action == "stop":
+                    _robot_mic_status = "processing"
+                elif action == "cancel":
+                    _robot_mic_status = "canceled"
+                await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+
+            elif msg_type == "mic_done":
+                _robot_mic_status = "idle"
+                await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+
+            elif msg_type == "mic_sync":
+                status = str(payload.get("status", "")).strip().lower()
+                if status:
+                    _robot_mic_status = status
+                    await ws_manager.broadcast({"type": "mic_status", "status": _robot_mic_status})
+
+            elif msg_type == "log":
+                message = str(payload.get("message", "")).strip()
+                if message:
+                    await ws_manager.broadcast({"type": "log", "message": message})
+
+            elif msg_type == "ping":
+                await websocket.send_json({"type": "pong", "timestamp": time.time_ns()})
+
+    except WebSocketDisconnect:
+        pass
+    except Exception as exc:
+        log.warning("Robot websocket closed with error: %s", exc)
+    finally:
+        robot_ws_manager.disconnect(websocket)
+        await ws_manager.broadcast({"type": "robot_connection", "status": "disconnected"})
 
 
 @app.post("/process-audio")
@@ -549,7 +761,7 @@ async def send_to_robot(req: RobotCommand):
             {"text": text, "emotion": req.emotion},
         )
     except Exception as e:
-        return {"error": f"Failed to reach robot at {ROBOT_CONTROL_URL}: {e}"}
+        return {"error": f"Failed to dispatch command over WebSocket: {e}"}
 
     return {
         "status": "Command sent directly to robot",

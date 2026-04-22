@@ -126,6 +126,36 @@ class TurboQuantRuntime:
                 "Please run `pip install -r requirements.txt`."
             ) from exc
 
+        temperature = float(os.getenv("LOCAL_LLM_TEMPERATURE", "0.35"))
+        frequency_penalty = float(os.getenv("LOCAL_LLM_FREQUENCY_PENALTY", "0.2"))
+        presence_penalty = float(os.getenv("LOCAL_LLM_PRESENCE_PENALTY", "0.15"))
+        top_p = float(os.getenv("LOCAL_LLM_TOP_P", "0.9"))
+
+        stop_sequences = [
+            "\nNgười hỏi:",
+            "\nUser:",
+            "\nS-Socrates:",
+            "\nS-SOCRATES:",
+            "\n---",
+            "\n\n##",
+            "<|eot_id|>",
+            "<|end_of_text|>",
+        ]
+
+        additional_kwargs: dict = {
+            "stop": stop_sequences,
+            "frequency_penalty": frequency_penalty,
+            "presence_penalty": presence_penalty,
+            "top_p": top_p,
+        }
+
+        min_p_env = os.getenv("LOCAL_LLM_MIN_P", "").strip()
+        if min_p_env:
+            try:
+                additional_kwargs["extra_body"] = {"min_p": float(min_p_env)}
+            except ValueError:
+                pass
+
         return OpenAILike(
             model=config.model_name,
             api_base=config.api_base,
@@ -135,7 +165,8 @@ class TurboQuantRuntime:
             is_function_calling_model=False,
             timeout=config.timeout_s,
             max_tokens=config.max_tokens,
-            temperature=0.2,
+            temperature=temperature,
+            additional_kwargs=additional_kwargs,
         )
 
     def _start_process(self, config: TurboQuantConfig) -> subprocess.Popen:
@@ -377,7 +408,7 @@ class TurboQuantRuntime:
                 self.initialize()
             assert self._llm is not None
 
-            log.info("Routing to TurboQuant local runtime...")
+            log.info("Routing to TurboQuant local runtime (complete)...")
             self._set_status("generating", "TurboQuant is generating a response...", last_error=None)
             generate_start = time.time()
             try:
@@ -408,7 +439,136 @@ class TurboQuantRuntime:
                 last_error=None,
             )
 
-        return str(getattr(response, "text", response))
+        return _clean_llm_output(str(getattr(response, "text", response)))
+
+    def generate_chat(self, messages: list[dict]) -> str:
+        """Generate a response using the chat API.
+
+        `messages` is a list of {"role": "system"|"user"|"assistant", "content": str}.
+        The runtime converts them to llama-index ChatMessage and calls `llm.chat(...)`.
+        """
+        if not messages:
+            return ""
+
+        try:
+            from llama_index.core.base.llms.types import ChatMessage, MessageRole
+        except ImportError:
+            from llama_index.core.llms import ChatMessage, MessageRole
+
+        role_map = {
+            "system": MessageRole.SYSTEM,
+            "user": MessageRole.USER,
+            "assistant": MessageRole.ASSISTANT,
+        }
+
+        chat_messages = []
+        for m in messages:
+            role = role_map.get(str(m.get("role", "user")).lower(), MessageRole.USER)
+            content = str(m.get("content", "")).strip()
+            if not content:
+                continue
+            chat_messages.append(ChatMessage(role=role, content=content))
+
+        if not chat_messages:
+            return ""
+
+        config = load_turboquant_config()
+        with self._lock:
+            if self._llm is None:
+                self.initialize()
+            assert self._llm is not None
+
+            log.info(
+                "Routing to TurboQuant local runtime (chat, %d messages)...",
+                len(chat_messages),
+            )
+            self._set_status("generating", "TurboQuant is generating a response...", last_error=None)
+            generate_start = time.time()
+            try:
+                response = self._llm.chat(chat_messages)
+            except Exception as exc:
+                self._set_status(
+                    "error",
+                    "TurboQuant inference failed.",
+                    last_error=str(exc),
+                )
+                log.error(
+                    "TurboQuant chat request failed after timeout=%ss. Check logs: stdout=%s stderr=%s",
+                    config.timeout_s,
+                    self._stdout_log_path,
+                    self._stderr_log_path,
+                )
+                raise RuntimeError(f"TurboQuant local chat request failed: {exc}") from exc
+            generate_ms = (time.time() - generate_start) * 1000
+            ready_detail = (
+                "TurboQuant is ready and context has been restored."
+                if self._context_warmed
+                else "TurboQuant is ready."
+            )
+            self._set_status(
+                "ready",
+                ready_detail,
+                last_generate_ms=round(generate_ms, 2),
+                last_error=None,
+            )
+
+        msg = getattr(response, "message", None)
+        text = getattr(msg, "content", None) if msg is not None else None
+        if text is None:
+            text = str(response)
+        return _clean_llm_output(str(text))
+
+
+_TRAILING_CUT_MARKERS = (
+    "\nNgười hỏi:",
+    "\nNguoi hoi:",
+    "\nUser:",
+    "\nUSER:",
+    "\nS-Socrates:",
+    "\nS-SOCRATES:",
+    "\n---",
+    "\n##",
+)
+
+
+def _clean_llm_output(text: str) -> str:
+    """Strip any hallucinated follow-up turns and collapse repetitive sentences."""
+    if not text:
+        return ""
+
+    cleaned = text.strip()
+
+    for marker in _TRAILING_CUT_MARKERS:
+        idx = cleaned.find(marker)
+        if idx > 0:
+            cleaned = cleaned[:idx].rstrip()
+
+    for prefix in ("S-Socrates:", "S-SOCRATES:", "S-socrates:"):
+        if cleaned.lower().startswith(prefix.lower()):
+            cleaned = cleaned[len(prefix):].lstrip()
+
+    if cleaned.startswith('"') and cleaned.endswith('"') and cleaned.count('"') == 2:
+        cleaned = cleaned[1:-1].strip()
+
+    sentences: list[str] = []
+    seen_normalized: set[str] = set()
+    buf = ""
+    for char in cleaned:
+        buf += char
+        if char in ".!?":
+            sentence = buf.strip()
+            norm = "".join(ch.lower() for ch in sentence if ch.isalnum())
+            if sentence and norm and norm not in seen_normalized:
+                sentences.append(sentence)
+                seen_normalized.add(norm)
+            buf = ""
+    tail = buf.strip()
+    if tail:
+        norm = "".join(ch.lower() for ch in tail if ch.isalnum())
+        if norm and norm not in seen_normalized:
+            sentences.append(tail)
+
+    return " ".join(sentences).strip() or cleaned
 
 
 turboquant_runtime = TurboQuantRuntime()

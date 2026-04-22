@@ -2,12 +2,19 @@ import time
 
 from services.llm_service import (
     generate_api_answer,
-    generate_local_answer,
+    generate_local_chat_answer,
     warm_local_context,
 )
 from services.memory_service import memory_service
-from services.prompt_config import API_SYSTEM_PROMPT, LOCAL_SYSTEM_PROMPT
-from services.retrieval.prompt_builder import build_api_rag_prompt, build_local_rag_prompt
+from services.prompt_config import (
+    API_SYSTEM_PROMPT,
+    FEW_SHOT_TURNS,
+    LOCAL_SYSTEM_PROMPT,
+)
+from services.retrieval.prompt_builder import (
+    build_api_rag_prompt,
+    build_local_chat_messages,
+)
 from services.retrieval.retriever import retriever
 from utils.logger import log
 
@@ -58,23 +65,25 @@ def process_local_chat_message(message: str) -> str:
     retrieved_chunks = retriever.search(normalized_message, top_k=2, rerank_k=6)
     retrieval_ms = (time.time() - retrieval_start) * 1000
 
-    prompt = build_local_rag_prompt(
+    chat_messages = build_local_chat_messages(
         system_prompt=LOCAL_SYSTEM_PROMPT,
+        few_shot_turns=FEW_SHOT_TURNS,
         history_context=history_context,
         retrieved_chunks=retrieved_chunks,
         user_message=normalized_message,
     )
+    total_prompt_len = sum(len(m.get("content", "")) for m in chat_messages)
     _log_context_metrics(
-        prompt=prompt,
+        prompt="[chat_messages:%d turns, %d chars]" % (len(chat_messages), total_prompt_len),
         history_context=history_context,
         retrieved_chunks=retrieved_chunks,
         retrieval_ms=retrieval_ms,
     )
 
     llm_start = time.time()
-    response_text = generate_local_answer(prompt)
+    response_text = generate_local_chat_answer(chat_messages)
     llm_ms = (time.time() - llm_start) * 1000
-    log.info("[CHAT] LLM response generated via local in %.0fms.", llm_ms)
+    log.info("[CHAT] LLM response generated via local chat in %.0fms.", llm_ms)
 
     memory_service.save(normalized_message, response_text)
 

@@ -100,30 +100,36 @@
                 </div>
                 <div class="preview-area fixed-preview" id="final-preview" contenteditable="false"></div>
 
-                <div class="label section-label section-gap-sm">MIC CONTROL</div>
+                <div class="label section-label section-gap-sm">MIC CONTROL (REMOTE STT)</div>
                 <div class="emotion-grid mic-grid section-gap-md">
-                    <button type="button" class="emotion-btn" id="mic-start-btn" onclick="startRobotMic(event)" style="background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.1)); border-color: rgba(16,185,129,0.4);">🎙️ Start Mic</button>
-                    <button type="button" class="emotion-btn" id="mic-stop-btn" onclick="stopRobotMic(event)" style="background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(217,119,6,0.1)); border-color: rgba(251,191,36,0.4);">📤 Stop & Send</button>
-                    <button type="button" class="emotion-btn" id="mic-cancel-btn" onclick="cancelRobotMic(event)" style="background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(153,27,27,0.1)); border-color: rgba(239,68,68,0.4);">✖ Cancel</button>
+                    <button type="button" class="emotion-btn" id="mic-start-btn" onclick="startRobotMic(event)" style="background: linear-gradient(135deg, rgba(16,185,129,0.2), rgba(5,150,105,0.1)); border-color: rgba(16,185,129,0.4);">🎙️ Ghi Âm (Start)</button>
+                    <button type="button" class="emotion-btn" id="mic-stop-btn" onclick="stopRobotMic(event)" style="background: linear-gradient(135deg, rgba(251,191,36,0.15), rgba(217,119,6,0.1)); border-color: rgba(251,191,36,0.4);">📤 Dừng Gửi (Process)</button>
+                    <button type="button" class="emotion-btn" id="mic-cancel-btn" onclick="cancelRobotMic(event)" style="background: linear-gradient(135deg, rgba(239,68,68,0.15), rgba(153,27,27,0.1)); border-color: rgba(239,68,68,0.4);">❌ Hủy (Cancel)</button>
+                </div>
+
+                <div class="tts-action-row section-gap-sm">
+                    <button type="button" class="emotion-btn" id="send-trigger" data-emotion="speaking" onclick="sendTtsToRobot(event, this)" disabled style="flex: 1; padding: 10px 4px; background: linear-gradient(135deg, rgba(59,130,246,0.15), rgba(37,99,235,0.1)); border-color: rgba(59,130,246,0.4);">🔊 GỬI TTS ĐỌC CHỮ</button>
                 </div>
 
                 <div class="label section-label section-gap-sm">SET ROBOT EMOTION</div>
-                <div class="emotion-grid">
-                    <button type="button" class="emotion-btn active" data-emotion="idle" onclick="setEmotion('idle', this)">Idle</button>
-                    <button type="button" class="emotion-btn" data-emotion="speaking" onclick="setEmotion('speaking', this)">Speaking</button>
-                    <button type="button" class="emotion-btn" data-emotion="error" onclick="setEmotion('error', this)">Error</button>
+                <div class="emotion-grid" id="emotion-controls">
+                    <button type="button" class="emotion-btn active" data-emotion="neutral" onclick="quickSendEmotion('neutral', this)">Neutral State</button>
+                    <button type="button" class="emotion-btn" data-emotion="listening" onclick="quickSendEmotion('listening', this)">Listening State</button>
+                    <button type="button" class="emotion-btn" data-emotion="uploading" onclick="quickSendEmotion('uploading', this)">Thinking State</button>
+                    <button type="button" class="emotion-btn" data-emotion="no_voice" onclick="quickSendEmotion('no_voice', this)">No Voice State</button>
+                    <button type="button" class="emotion-btn" data-emotion="error" onclick="quickSendEmotion('error', this)">Error State</button>
                 </div>
 
-                <button type="button" class="send-btn" id="send-trigger" onclick="sendToRobot(event)" disabled>
-                    SEND TO ROBOT
-                </button>
-                <div id="last-sent-status">Waiting for response...</div>
+                <div style="margin-top: 10px; display: flex; gap: 8px;">
+                    <button type="button" class="send-btn stop-tts-btn" id="stop-tts-btn" onclick="stopRobotTTS(event)" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--danger); font-size: 0.8rem;">🛑 DỪNG ĐỌC (STOP TTS)</button>
+                </div>
+                <div id="last-sent-status">Waiting for action...</div>
                 
                 <div class="panel-header panel-header-inline">
                     System Logs
-                    <button type="button" class="settings-btn compact-btn" id="expand-log-btn" onclick="toggleLogExpand()">⤢ EXPAND</button>
+                    <button type="button" class="settings-btn compact-btn" id="expand-log-btn" onclick="toggleLogExpand()">⤡ COLLAPSE</button>
                 </div>
-                <div id="log-container" class="log-panel"></div>
+                <div id="log-container" class="log-panel log-expanded"></div>
             </div>
         </section>
     </main>
@@ -134,15 +140,6 @@
             <div class="modal-header">
                 <h2 class="modal-title">⚙ Settings</h2>
                 <button type="button" class="settings-btn" onclick="toggleModal(false)">✕</button>
-            </div>
-
-            <!-- SYSTEM ROUTING -->
-            <div class="settings-section">
-                <div class="settings-section-title">SYSTEM ROUTING</div>
-                <div class="input-group">
-                    <label>ROBOT CONTROL URL</label>
-                    <input type="text" id="robot-control-url" value="http://192.168.1.6:9000">
-                </div>
             </div>
 
             <!-- AUDIO ENGINE PARAMETERS -->
@@ -251,6 +248,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260402e"></script>
+    <script src="script.js?v=20260402f"></script>
 </body>
 </html>

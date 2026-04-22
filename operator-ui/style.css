@@ -216,6 +216,52 @@ main {
   gap: clamp(0.5rem, 1.5vw, 0.75rem);
   flex-wrap: wrap;
 }
+.tts-action-row {
+  display: flex;
+  gap: clamp(0.5rem, 1.5vw, 0.75rem);
+  align-items: stretch;
+  margin-top: 0.5rem;
+}
+
+.tts-action-row .send-btn {
+  flex: 2 1 0;
+}
+
+.tts-action-row .emotion-btn {
+  flex: 1 1 0;
+}
+
+.secondary-action-btn {
+  flex: 1 1 0;
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(127, 29, 29, 0.12));
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #fecaca;
+  padding: clamp(0.95rem, 2.6vw, 1.25rem);
+  border-radius: 1rem;
+  font-size: clamp(0.9rem, 2.5vw, 1rem);
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(239, 68, 68, 0.18);
+  transition: all 0.2s;
+}
+
+.secondary-action-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 30px rgba(239, 68, 68, 0.28);
+}
+
+.secondary-action-btn:active {
+  transform: translateY(1px);
+}
+
+.secondary-action-btn:disabled {
+  background: var(--border);
+  color: var(--text-dim);
+  box-shadow: none;
+  cursor: not-allowed;
+}
 .transcript-warning {
   display: none;
   padding: 0.75rem 0.85rem;
@@ -420,6 +466,12 @@ main {
   flex-direction: column;
 }
 
+.log-panel.log-expanded {
+  height: 300px;
+  min-height: 300px;
+  max-height: 500px;
+}
+
 .log-entry {
   margin-bottom: 4px;
   line-height: 1.4;
@@ -430,6 +482,11 @@ main {
   grid-template-columns: repeat(3, 1fr);
   gap: 0.5rem;
 }
+
+#emotion-controls {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .mic-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -584,11 +641,13 @@ main {
 
   .header-actions,
   .panel-header-actions,
-  .action-row {
+  .action-row,
+  .tts-action-row {
     width: 100%;
   }
 
   .action-row,
+  .tts-action-row,
   .header-actions {
     flex-wrap: wrap;
   }
@@ -596,6 +655,10 @@ main {
   .emotion-grid,
   .mic-grid,
   .input-source-picker {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #emotion-controls {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -621,14 +684,23 @@ main {
     grid-template-columns: 1fr;
   }
 
+  #emotion-controls {
+    grid-template-columns: 1fr;
+  }
+
   .action-row {
+    flex-direction: column;
+  }
+
+  .tts-action-row {
     flex-direction: column;
   }
 
   .ai-reflex-btn,
   .send-btn,
   .emotion-btn,
-  .settings-btn {
+  .settings-btn,
+  .secondary-action-btn {
     width: 100%;
   }
 

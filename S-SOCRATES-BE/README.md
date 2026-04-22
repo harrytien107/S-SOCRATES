@@ -69,7 +69,6 @@ S-SOCRATES-BE/
 Tùy cấu hình service, bạn có thể cần:
 - `DEEPGRAM_API_KEY`
 - `GEMINI_API_KEY`
-- `ROBOT_CONTROL_URL`
 
 ## Local LLM
 

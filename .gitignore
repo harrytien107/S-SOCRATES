@@ -52,6 +52,23 @@ push_output.txt
 # IDE / Editor Settings
 .idea/
 .vscode/
+.specstory/
+
+S-SOCRATES-APP/voice_chat_app/ios/Flutter/flutter_export_environment.sh
+S-SOCRATES-APP/voice_chat_app/ios/Flutter/Generated.xcconfig
+.opencode
+skills-lock.json
+.agents
+.gitnexus
+AGENTS.md
+CLAUDE.md
+.claude/
+Enviroments/
 
 # File Personal
 ./RUN-Project-On-Glass.md
+S-SOCRATES-BE/scripts
+S-SOCRATES-APP/voice_chat_app/windows/flutter/
+S-SOCRATES-APP/voice_chat_app/.flutter-plugins-dependencies
+S-SOCRATES-dev/
+S-SOCRATES-BE/operator_settings.json

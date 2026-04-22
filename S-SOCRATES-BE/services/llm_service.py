@@ -26,6 +26,10 @@ def generate_local_answer(prompt: str) -> str:
     return turboquant_runtime.generate(prompt)
 
 
+def generate_local_chat_answer(messages: list[dict]) -> str:
+    return turboquant_runtime.generate_chat(messages)
+
+
 def generate_api_answer(prompt: str) -> str:
     return gemini_service.generate(prompt)
 

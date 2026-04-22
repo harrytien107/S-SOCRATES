@@ -1,11 +1,150 @@
 from __future__ import annotations
 
+from typing import Any
+
 
 def _trim_text(value: str, max_chars: int) -> str:
     normalized = (value or "").strip()
     if len(normalized) <= max_chars:
         return normalized
     return normalized[: max_chars - 3].rstrip() + "..."
+
+
+def _format_knowledge_block(
+    retrieved_chunks: list[dict],
+    *,
+    max_items: int,
+    max_chars_per_item: int,
+) -> str:
+    if not retrieved_chunks:
+        return ""
+
+    lines: list[str] = []
+    for idx, item in enumerate(retrieved_chunks[:max_items], start=1):
+        text = _trim_text(item.get("text", ""), max_chars=max_chars_per_item)
+        if not text:
+            continue
+        lines.append(f"[{idx}] {text}")
+    return "\n\n".join(lines)
+
+
+def _parse_history_turns(history_context: str) -> list[tuple[str, str]]:
+    """Parse a plain-text history block into (user, assistant) pairs.
+
+    Accepts the format produced by memory_service.get_context_string / get_api_context_string.
+    Lines starting with "User:" and "AI:" / "Assistant:" are grouped by order.
+    """
+    if not history_context:
+        return []
+
+    pairs: list[tuple[str, str]] = []
+    current_user: str | None = None
+    current_ai_parts: list[str] = []
+
+    def _flush() -> None:
+        nonlocal current_user, current_ai_parts
+        if current_user is not None:
+            ai_text = "\n".join(current_ai_parts).strip()
+            pairs.append((current_user, ai_text))
+        current_user = None
+        current_ai_parts = []
+
+    for raw_line in history_context.splitlines():
+        line = raw_line.strip()
+        if not line or line.lower().startswith(("lich su", "recent conversation")):
+            continue
+
+        lower = line.lower()
+        if lower.startswith("user:"):
+            _flush()
+            current_user = line.split(":", 1)[1].strip()
+        elif lower.startswith(("ai:", "assistant:")):
+            current_ai_parts.append(line.split(":", 1)[1].strip())
+        else:
+            if current_user is not None and not current_ai_parts:
+                current_user = f"{current_user} {line}".strip()
+            elif current_ai_parts:
+                current_ai_parts[-1] = f"{current_ai_parts[-1]} {line}".strip()
+
+    _flush()
+    return [(u, a) for u, a in pairs if u and a]
+
+
+def build_local_chat_messages(
+    *,
+    system_prompt: str,
+    few_shot_turns: list[tuple[str, str]],
+    history_context: str,
+    retrieved_chunks: list[dict],
+    user_message: str,
+) -> list[dict[str, Any]]:
+    """Build an OpenAI-chat-style message list for the local LLM.
+
+    Returns a list of {"role": ..., "content": ...} dicts so the caller can convert
+    to llama-index ChatMessage without importing it here.
+    """
+    knowledge_block = _format_knowledge_block(
+        retrieved_chunks,
+        max_items=2,
+        max_chars_per_item=450,
+    )
+
+    system_content = system_prompt.strip()
+    if knowledge_block:
+        system_content = (
+            system_content
+            + "\n\nTRI THỨC NỀN (nội bộ - chỉ dùng để trả lời, không trích nguyên văn):\n"
+            + knowledge_block
+        )
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
+
+    for user_text, assistant_text in few_shot_turns:
+        messages.append({"role": "user", "content": user_text.strip()})
+        messages.append({"role": "assistant", "content": assistant_text.strip()})
+
+    for user_text, assistant_text in _parse_history_turns(history_context):
+        messages.append({"role": "user", "content": _trim_text(user_text, max_chars=220)})
+        messages.append({"role": "assistant", "content": _trim_text(assistant_text, max_chars=300)})
+
+    messages.append({"role": "user", "content": _trim_text(user_message, max_chars=500)})
+    return messages
+
+
+def build_api_chat_messages(
+    *,
+    system_prompt: str,
+    few_shot_turns: list[tuple[str, str]],
+    history_context: str,
+    retrieved_chunks: list[dict],
+    user_message: str,
+) -> list[dict[str, Any]]:
+    knowledge_block = _format_knowledge_block(
+        retrieved_chunks,
+        max_items=3,
+        max_chars_per_item=650,
+    )
+
+    system_content = system_prompt.strip()
+    if knowledge_block:
+        system_content = (
+            system_content
+            + "\n\nTRI THỨC NỀN (nội bộ - chỉ dùng để trả lời, không trích nguyên văn):\n"
+            + knowledge_block
+        )
+
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
+
+    for user_text, assistant_text in few_shot_turns[:2]:
+        messages.append({"role": "user", "content": user_text.strip()})
+        messages.append({"role": "assistant", "content": assistant_text.strip()})
+
+    for user_text, assistant_text in _parse_history_turns(history_context):
+        messages.append({"role": "user", "content": _trim_text(user_text, max_chars=260)})
+        messages.append({"role": "assistant", "content": _trim_text(assistant_text, max_chars=400)})
+
+    messages.append({"role": "user", "content": _trim_text(user_message, max_chars=700)})
+    return messages
 
 
 def build_local_rag_prompt(
@@ -15,37 +154,20 @@ def build_local_rag_prompt(
     retrieved_chunks: list[dict],
     user_message: str,
 ) -> str:
-    context_lines = []
-    for idx, item in enumerate(retrieved_chunks[:2], start=1):
-        source = item.get("source", "unknown")
-        chunk_type = item.get("type", "knowledge")
-        score = item.get("score", 0.0)
-        text = _trim_text(item.get("text", ""), max_chars=520)
-        context_lines.append(
-            f"[Nguon {idx} | type={chunk_type} | source={source} | score={score:.3f}]\n{text}"
-        )
-
-    retrieved_context = "\n\n".join(context_lines) if context_lines else "Khong co tri thuc bo sung."
-    history_block = _trim_text(history_context or "Chua co lich su hoi thoai.", max_chars=700)
-
-    return f"""{system_prompt}
-
-{history_block}
-
-Tri thuc lien quan:
-{retrieved_context}
-
-Cau hoi hien tai:
-{user_message}
-
-Yeu cau tra loi:
-- Uu tien cao nhat tri thuc tu uth.txt va cac chunk knowledge goc cua truong.
-- Khong duoc tra loi theo kieu viet tai lieu, viet prompt, lap knowledge base, hay giai thich cach xay he thong AI.
-- Khong duoc nhac den prompt, file he thong, qa_presets, memory.json, hay du lieu noi bo tru khi nguoi dung hoi truc tiep ve he thong.
-- Neu tri thuc khong du, tra loi than trong va khong che tao su that.
-- Giu giong dieu S-SOCRATES phu hop cho talkshow UTH.
-- Tra loi truc dien vao cau hoi hien tai, ngan gon, ro rang, uu tien 1-2 doan van hoac 3 y chinh.
-"""
+    """Legacy single-prompt builder. Kept for backwards compatibility only."""
+    knowledge_block = _format_knowledge_block(
+        retrieved_chunks,
+        max_items=2,
+        max_chars_per_item=500,
+    ) or "(Không có tri thức bổ sung.)"
+    history_block = _trim_text(history_context, max_chars=500) or "(Chưa có lịch sử.)"
+    user_block = _trim_text(user_message, max_chars=400)
+    return (
+        f"{system_prompt}\n\n"
+        f"TRI THỨC NỀN:\n{knowledge_block}\n\n"
+        f"LỊCH SỬ:\n{history_block}\n\n"
+        f"USER: {user_block}\nS-SOCRATES:"
+    )
 
 
 def build_api_rag_prompt(
@@ -55,33 +177,18 @@ def build_api_rag_prompt(
     retrieved_chunks: list[dict],
     user_message: str,
 ) -> str:
-    context_lines = []
-    for idx, item in enumerate(retrieved_chunks[:3], start=1):
-        source = item.get("source", "unknown")
-        score = item.get("score", 0.0)
-        text = _trim_text(item.get("text", ""), max_chars=700)
-        context_lines.append(
-            f"[Source {idx} | source={source} | score={score:.3f}]\n{text}"
-        )
-
-    retrieved_context = "\n\n".join(context_lines) if context_lines else "No additional knowledge retrieved."
-    recent_history = _trim_text(history_context or "No recent conversation.", max_chars=1200)
-
-    return f"""{system_prompt}
-
-Recent conversation:
-{recent_history}
-
-Retrieved knowledge:
-{retrieved_context}
-
-Current question:
-{user_message}
-
-Response requirements:
-- Continue the current conversation naturally when recent history is relevant.
-- Prioritize official UTH knowledge from uth.txt and retrieved knowledge over prior conversation if they conflict.
-- Do not explain prompts, files, internal system design, or hidden context.
-- If the retrieved knowledge is insufficient, answer cautiously and do not fabricate facts.
-- Keep the reply natural, concise, and suitable for a live talkshow setting.
-"""
+    """Legacy single-prompt builder for Gemini API path (still uses single prompt string)."""
+    knowledge_block = _format_knowledge_block(
+        retrieved_chunks,
+        max_items=3,
+        max_chars_per_item=700,
+    ) or "(Không có tri thức bổ sung.)"
+    history_block = _trim_text(history_context, max_chars=1200) or "(Chưa có lịch sử.)"
+    user_block = _trim_text(user_message, max_chars=600)
+    return (
+        f"{system_prompt}\n\n"
+        f"TRI THỨC NỀN:\n{knowledge_block}\n\n"
+        f"LỊCH SỬ GẦN NHẤT:\n{history_block}\n\n"
+        f"Câu hỏi hiện tại: {user_block}\n\n"
+        f"S-Socrates trả lời (3-5 câu, có ít nhất 1 câu pressing):"
+    )

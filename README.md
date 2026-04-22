@@ -80,7 +80,6 @@ Backend đọc cấu hình từ `S-SOCRATES-BE/.env`.
 GEMINI_API_KEY=my_gemini_api_key
 GOOGLE_APPLICATION_CREDENTIALS=path_to_google_credentials.json
 DEEPGRAM_API_KEY=my_deepgram_api_key
-ROBOT_CONTROL_URL=http://IP:9000
 
 # Local AI mode for the thesis: TurboQuant local runtime
 LOCAL_LLM_BACKEND=turboquant

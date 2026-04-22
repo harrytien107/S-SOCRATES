@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
 import 'package:voice_chat_app/services/api_config.dart';
 import 'package:voice_chat_app/services/agent_api.dart';
 import 'package:voice_chat_app/services/robot_control_server.dart';
@@ -19,6 +21,12 @@ class RobotController {
   String _lastMicStatus = 'idle';
   Timer? _backendHealthTimer;
   bool _isCheckingBackend = false;
+  WebSocketChannel? _robotWsChannel;
+  StreamSubscription<dynamic>? _robotWsSubscription;
+  Timer? _robotWsReconnectTimer;
+  bool _robotWsConnected = false;
+  int _robotWsReconnectAttempts = 0;
+  bool _robotWsStopped = false;
 
   final AudioRecorder _audioRecorder = AudioRecorder();
   final AgentAPI _agentAPI = AgentAPI();
@@ -29,6 +37,8 @@ class RobotController {
   );
 
   void startPolling() {
+    _robotWsStopped = false;
+    _connectRobotWebSocket();
     unawaited(_robotControlServer.start());
     debugPrint('Robot direct control server started on port 9000');
     unawaited(refreshBackendStatus());
@@ -40,6 +50,8 @@ class RobotController {
   }
 
   void stopPolling() {
+    _robotWsStopped = true;
+    _disconnectRobotWebSocket();
     _backendHealthTimer?.cancel();
     _backendHealthTimer = null;
     unawaited(_robotControlServer.stop());
@@ -51,7 +63,10 @@ class RobotController {
     if (_isCheckingBackend) return;
     _isCheckingBackend = true;
     try {
-      final reachable = await _agentAPI.pingBackend();
+      var reachable = _robotWsConnected;
+      if (!reachable) {
+        reachable = await _agentAPI.pingBackend();
+      }
       if (isBackendReachable.value != reachable) {
         isBackendReachable.value = reachable;
       }
@@ -68,6 +83,157 @@ class RobotController {
     }
   }
 
+  void _connectRobotWebSocket() {
+    if (_robotWsStopped) return;
+    _robotWsReconnectTimer?.cancel();
+    _robotWsReconnectTimer = null;
+
+    final wsUrl = ApiConfig.robotWebSocketUrl;
+    try {
+      final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
+      _robotWsChannel = channel;
+      _robotWsSubscription?.cancel();
+      _robotWsSubscription = channel.stream.listen(
+        _handleRobotWebSocketMessage,
+        onError: (Object error, StackTrace stackTrace) {
+          debugPrint('Robot WebSocket error: $error');
+          _onRobotWebSocketDisconnected();
+        },
+        onDone: _onRobotWebSocketDisconnected,
+        cancelOnError: true,
+      );
+      _robotWsConnected = true;
+      _robotWsReconnectAttempts = 0;
+      isBackendReachable.value = true;
+      debugPrint('Connecting robot websocket: $wsUrl');
+    } catch (e) {
+      debugPrint('Robot WebSocket connect failed: $e');
+      _onRobotWebSocketDisconnected();
+    }
+  }
+
+  void _onRobotWebSocketDisconnected() {
+    if (_robotWsStopped) return;
+    _robotWsConnected = false;
+
+    _robotWsSubscription?.cancel();
+    _robotWsSubscription = null;
+
+    try {
+      _robotWsChannel?.sink.close();
+    } catch (_) {}
+    _robotWsChannel = null;
+
+    _scheduleRobotWebSocketReconnect();
+  }
+
+  void _scheduleRobotWebSocketReconnect() {
+    if (_robotWsStopped || _robotWsReconnectTimer != null) return;
+
+    _robotWsReconnectAttempts += 1;
+    var delaySeconds = 1;
+    if (_robotWsReconnectAttempts > 4) {
+      delaySeconds = 5;
+    } else if (_robotWsReconnectAttempts > 1) {
+      delaySeconds = 2;
+    }
+
+    _robotWsReconnectTimer = Timer(Duration(seconds: delaySeconds), () {
+      _robotWsReconnectTimer = null;
+      _connectRobotWebSocket();
+    });
+  }
+
+  void _disconnectRobotWebSocket() {
+    _robotWsReconnectTimer?.cancel();
+    _robotWsReconnectTimer = null;
+    _robotWsReconnectAttempts = 0;
+    _robotWsConnected = false;
+
+    _robotWsSubscription?.cancel();
+    _robotWsSubscription = null;
+
+    try {
+      _robotWsChannel?.sink.close();
+    } catch (_) {}
+    _robotWsChannel = null;
+  }
+
+  void _handleRobotWebSocketMessage(dynamic raw) {
+    if (!_robotWsConnected) {
+      _robotWsConnected = true;
+      _robotWsReconnectAttempts = 0;
+      isBackendReachable.value = true;
+      if (state.value == RobotUiState.error &&
+          currentMessage.value == 'Mất kết nối tới backend.') {
+        state.value = RobotUiState.idle;
+        currentMessage.value = '';
+      }
+      debugPrint('Robot websocket connected and ready.');
+    }
+
+    try {
+      final decoded = raw is String ? jsonDecode(raw) : raw;
+      if (decoded is! Map) return;
+
+      final data = Map<String, dynamic>.from(decoded);
+      final type = (data['type'] ?? '').toString().trim().toLowerCase();
+
+      if (type == 'mic_status') {
+        final status = (data['status'] ?? '').toString().trim().toLowerCase();
+        if (status == 'listening') {
+          unawaited(_handleRemoteMicAction('start'));
+        } else if (status == 'processing') {
+          unawaited(_handleRemoteMicAction('stop'));
+        } else if (status == 'canceled') {
+          unawaited(_handleRemoteMicAction('cancel'));
+        } else if (status == 'idle') {
+          _lastMicStatus = 'idle';
+        }
+      } else if (type == 'command') {
+        final text = (data['text'] ?? '').toString();
+        final emotion = (data['emotion'] ?? 'neutral').toString();
+        unawaited(_handleRemoteCommand(text, emotion));
+      } else if (type == 'stop_tts') {
+        unawaited(_handleRemoteCommand('', 'stop_tts'));
+      } else if (type == 'ping') {
+        _sendRobotSocketMessage({'type': 'pong'});
+      }
+    } catch (e) {
+      debugPrint('Robot websocket parse error: $e');
+    }
+  }
+
+  bool _sendRobotSocketMessage(Map<String, dynamic> payload) {
+    final channel = _robotWsChannel;
+    if (!_robotWsConnected || channel == null) {
+      return false;
+    }
+
+    try {
+      channel.sink.add(jsonEncode(payload));
+      return true;
+    } catch (e) {
+      debugPrint('Robot websocket send error: $e');
+      _robotWsConnected = false;
+      return false;
+    }
+  }
+
+  Future<void> _notifyManualMicAction(String action) async {
+    final sent = _sendRobotSocketMessage({'type': 'manual_mic', 'action': action});
+    if (!sent) {
+      await _agentAPI.sendMicControl(action);
+    }
+  }
+
+  Future<void> _notifyMicDone() async {
+    final sent = _sendRobotSocketMessage({'type': 'mic_done'});
+    if (!sent) {
+      await _agentAPI.notifyMicDone();
+    }
+  }
+
   void clearConnectionWarning() {
     if (!isBackendReachable.value) {
       isBackendReachable.value = true;
@@ -75,6 +241,13 @@ class RobotController {
     if (state.value == RobotUiState.error) {
       state.value = RobotUiState.idle;
     }
+  }
+
+  void reconnectBackend() {
+    _robotWsStopped = false;
+    _disconnectRobotWebSocket();
+    _connectRobotWebSocket();
+    unawaited(refreshBackendStatus());
   }
 
   // ============================================
@@ -118,6 +291,9 @@ class RobotController {
   // Remote debug log — gửi HTTP lên backend để ta thấy trên server console
   void _remoteLog(String msg) {
     debugPrint('📱 $msg');
+    if (_sendRobotSocketMessage({'type': 'log', 'message': msg})) {
+      return;
+    }
     try {
       http.post(
         Uri.parse('${ApiConfig.baseUrl}/robot/log'),
@@ -184,17 +360,17 @@ class RobotController {
   // ============================================
   Future<void> manualStartRecording() async {
     _lastMicStatus = 'listening';
-    await _agentAPI.syncRobotMicStatus('listening');
+    await _notifyManualMicAction('start');
     state.value = RobotUiState.listening;
     await startRecordingAudio();
   }
 
   Future<void> manualStopRecording() async {
     _lastMicStatus = 'processing';
-    await _agentAPI.syncRobotMicStatus('processing');
+    await _notifyManualMicAction('stop');
     await stopRecordingAndProcess();
     _lastMicStatus = 'idle';
-    await _agentAPI.notifyMicDone();
+    await _notifyMicDone();
   }
 
   Map<String, dynamic> _buildControlSnapshot() {
@@ -225,7 +401,7 @@ class RobotController {
       unawaited(() async {
         await stopRecordingAndProcess();
         _lastMicStatus = 'idle';
-        await _agentAPI.notifyMicDone();
+        await _notifyMicDone();
       }());
       return;
     }
@@ -234,7 +410,7 @@ class RobotController {
       unawaited(() async {
         await cancelRecording();
         _lastMicStatus = 'idle';
-        await _agentAPI.notifyMicDone();
+        await _notifyMicDone();
       }());
     }
   }
@@ -248,8 +424,18 @@ class RobotController {
     debugPrint('Process Command: $text ($emotion)');
 
     try {
+      final normalizedEmotion = emotion.trim().toLowerCase().replaceAll('-', '_');
+
+      if (normalizedEmotion == 'stop_tts' || normalizedEmotion == 'stoptts') {
+        await TtsService.stop();
+        currentMessage.value = '';
+        state.value = RobotUiState.idle;
+        debugPrint('State -> RobotUiState.idle (stop_tts)');
+        return;
+      }
+
       RobotUiState mappedState = RobotUiState.idle;
-      switch (emotion) {
+      switch (normalizedEmotion) {
         case 'idle':
         case 'neutral':
           mappedState = RobotUiState.idle;
@@ -274,7 +460,7 @@ class RobotController {
       }
 
       // === NO VOICE ===
-      if (emotion == 'no_voice') {
+      if (normalizedEmotion == 'no_voice') {
         currentMessage.value = text;
         state.value = RobotUiState.thinking;
         return;
@@ -345,6 +531,8 @@ class RobotController {
 
   void dispose() {
     stopPolling();
+    _robotWsStopped = true;
+    _disconnectRobotWebSocket();
     _audioRecorder.dispose();
     state.dispose();
     currentMessage.dispose();

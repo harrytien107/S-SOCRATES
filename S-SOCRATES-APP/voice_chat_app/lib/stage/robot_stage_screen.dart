@@ -335,7 +335,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
                             ),
                             onSubmitted: (_) async {
                               await ApiConfig.setBaseUrl(ctrl.text.trim());
-                              await _robotController.refreshBackendStatus();
+                              _robotController.reconnectBackend();
                               if (ctx.mounted) Navigator.of(ctx).pop();
                             },
                           ),
@@ -371,7 +371,7 @@ class _RobotStageScreenState extends State<RobotStageScreen> {
                                   ),
                                   onPressed: () async {
                                     await ApiConfig.setBaseUrl(ctrl.text.trim());
-                                    await _robotController.refreshBackendStatus();
+                                    _robotController.reconnectBackend();
                                     if (ctx.mounted) Navigator.of(ctx).pop();
                                   },
                                   child: const Text(
