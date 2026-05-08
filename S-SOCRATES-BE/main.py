@@ -23,8 +23,11 @@ from services.gemini_service import gemini_service
 from services.llm_service import (
     AVAILABLE_GEMINI_MODELS,
     get_local_backend_status,
+    get_local_baseline_backend_status,
     initialize_local_backend,
+    initialize_local_baseline_backend,
     shutdown_local_backend,
+    shutdown_local_baseline_backend,
     switch_gemini_model,
     warm_local_context,
 )
@@ -35,7 +38,8 @@ from services.tts_service import CHIRP3_HD_VOICES, process_tts_request
 from utils.logger import log
 
 ENV_PATH = Path(__file__).resolve().parent / ".env"
-load_dotenv(dotenv_path=ENV_PATH, override=True)
+# Keep runtime env (from .ps1 scripts) higher priority than .env defaults.
+load_dotenv(dotenv_path=ENV_PATH, override=False)
 
 api_key = os.getenv("DEEPGRAM_API_KEY")
 if not api_key:
@@ -302,7 +306,14 @@ else:
 
 def build_local_runtime_payload() -> dict:
     if supports_local_ai():
-        return get_local_backend_status()
+        turbo = get_local_backend_status()
+        baseline = get_local_baseline_backend_status()
+        payload = dict(turbo)
+        payload["variants"] = {
+            "turboquant": turbo,
+            "baseline": baseline,
+        }
+        return payload
     return {
         "ready": False,
         "phase": "disabled",
@@ -322,6 +333,17 @@ async def startup_local_llm():
             await run_in_threadpool(initialize_local_backend)
         except Exception as e:
             log.warning(f"Local LLM backend startup skipped: {e}")
+        try:
+            await run_in_threadpool(initialize_local_baseline_backend)
+        except Exception as e:
+            log.warning(f"Local baseline backend startup skipped: {e}")
+        warm_stats = memory_service.get_reconstruction_stats()
+        if warm_stats.get("excluded", 0) > 0:
+            log.warning(
+                "TurboQuant startup warmup excluded %s/%s recent memory turns (likely baseline benchmark history).",
+                warm_stats["excluded"],
+                warm_stats["total_recent"],
+            )
         warm_context = memory_service.build_reconstruction_prompt()
         if warm_context:
             _local_runtime_warm_task = asyncio.create_task(background_warm_local_runtime(warm_context))
@@ -337,6 +359,7 @@ async def shutdown_local_llm():
         _local_runtime_warm_task = None
     if supports_local_ai():
         await run_in_threadpool(shutdown_local_backend)
+        await run_in_threadpool(shutdown_local_baseline_backend)
 
 
 async def background_warm_local_runtime(warm_context: str):
@@ -411,6 +434,9 @@ async def get_configs():
     supported_modes = []
     if supports_local_ai():
         supported_modes.append({"code": "local", "label": "TurboQuant Local Model"})
+        supported_modes.append({"code": "ai_turbo", "label": "TurboQuant Local Model"})
+        supported_modes.append({"code": "ai_baseline", "label": "Local Baseline Model"})
+        supported_modes.append({"code": "baseline", "label": "Local Baseline Model"})
     if supports_api_ai():
         supported_modes.append({"code": "gemini", "label": "Gemini API"})
     return {
@@ -700,6 +726,24 @@ async def operator_decision(req: DecisionRequest):
                 process_chat_message,
                 req.transcript or "",
                 "local",
+            )
+            emotion = "speaking"
+        elif req.mode == "ai_turbo":
+            if not supports_local_ai():
+                return {"error": "Local AI is disabled in this deployment mode."}
+            text = await run_in_threadpool(
+                process_chat_message,
+                req.transcript or "",
+                "turboquant",
+            )
+            emotion = "speaking"
+        elif req.mode in {"ai_baseline", "baseline"}:
+            if not supports_local_ai():
+                return {"error": "Local AI is disabled in this deployment mode."}
+            text = await run_in_threadpool(
+                process_chat_message,
+                req.transcript or "",
+                "local_baseline",
             )
             emotion = "speaking"
         elif req.mode == "gemini":

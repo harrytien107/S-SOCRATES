@@ -16,7 +16,7 @@ from utils.logger import log
 
 
 ENV_PATH = BASE_DIR / ".env"
-load_dotenv(dotenv_path=ENV_PATH, override=True)
+load_dotenv(dotenv_path=ENV_PATH, override=False)
 
 
 def _read_bool_env(name: str, default: bool) -> bool:
@@ -69,19 +69,26 @@ class TurboQuantConfig:
 
 
 def load_turboquant_config() -> TurboQuantConfig:
+    def _env(*names: str, default: str = "") -> str:
+        for name in names:
+            value = os.getenv(name)
+            if value is not None and value.strip() != "":
+                return value.strip()
+        return default
+
     return TurboQuantConfig(
         autostart=_read_bool_env("LOCAL_LLM_AUTOSTART", True),
-        timeout_s=float(os.getenv("LOCAL_LLM_TIMEOUT_S", "120")),
-        host=os.getenv("LOCAL_LLM_HOST", "127.0.0.1"),
-        port=int(os.getenv("LOCAL_LLM_PORT", "8011")),
-        model_name=os.getenv("LOCAL_LLM_MODEL_NAME", "").strip(),
-        gguf_path=os.getenv("LOCAL_LLM_GGUF_PATH", "").strip(),
-        server_bin=os.getenv("TURBOQUANT_SERVER_BIN", "").strip(),
-        cache_type=os.getenv("TURBOQUANT_CACHE_TYPE", "turbo2").strip(),
-        ngl=int(os.getenv("TURBOQUANT_NGL", "99")),
-        ctx=int(os.getenv("TURBOQUANT_CTX", "8192")),
-        max_tokens=int(os.getenv("LOCAL_LLM_MAX_TOKENS", "256")),
-        reasoning_budget=int(os.getenv("TURBOQUANT_REASONING_BUDGET", "0")),
+        port=int(_env("LOCAL_LLM_PORT", default="8011")),
+        timeout_s=float(_env("LOCAL_TIMEOUT_S", default="300")),
+        host=_env("LOCAL_HOST", default="127.0.0.1"),
+        model_name=_env("LOCAL_MODEL_NAME"),
+        gguf_path=_env("LOCAL_GGUF_PATH"),
+        server_bin=_env("LOCAL_SERVER_BIN"),
+        cache_type=_env("LOCAL_CACHE_TYPE", default="turbo2"),
+        ngl=int(_env("LOCAL_NGL", default="99")),
+        ctx=int(_env("LOCAL_CTX", default="8192")),
+        max_tokens=int(_env("LOCAL_MAX_TOKENS", default="256")),
+        reasoning_budget=int(_env("LOCAL_REASONING_BUDGET", default="0")),
     )
 
 

@@ -2,7 +2,9 @@ import time
 
 from services.llm_service import (
     generate_api_answer,
+    generate_local_baseline_chat_answer,
     generate_local_chat_answer,
+    initialize_local_baseline_backend,
     warm_local_context,
 )
 from services.memory_service import memory_service
@@ -19,7 +21,7 @@ from services.retrieval.retriever import retriever
 from utils.logger import log
 
 
-SUPPORTED_MODEL_CHOICES = {"local", "turboquant", "gemini"}
+SUPPORTED_MODEL_CHOICES = {"local", "turboquant", "local_baseline", "baseline", "gemini"}
 
 
 def _log_context_metrics(
@@ -45,21 +47,33 @@ def _log_context_metrics(
     )
 
 
-def process_local_chat_message(message: str) -> str:
+def process_local_chat_message(message: str, *, engine: str = "turboquant") -> str:
     normalized_message = (message or "").strip()
     if not normalized_message:
         return ""
 
     start_time = time.time()
-    log.info("[CHAT] Processing LOCAL request")
+    engine_normalized = "baseline" if engine in {"baseline", "local_baseline"} else "turboquant"
+    log.info("[CHAT] Processing LOCAL request (engine=%s)", engine_normalized)
 
     history_context = memory_service.get_context_string()
-    warm_context = memory_service.build_reconstruction_prompt()
-    if warm_context:
-        warm_start = time.time()
-        warm_local_context(warm_context)
-        warm_ms = (time.time() - warm_start) * 1000
-        log.info("[CHAT] Warmed TurboQuant context in %.0fms.", warm_ms)
+    if engine_normalized == "turboquant":
+        warm_stats = memory_service.get_reconstruction_stats()
+        if warm_stats.get("excluded", 0) > 0:
+            log.warning(
+                "[CHAT] TurboQuant warmup excluded %s/%s recent memory turns (different engine, e.g. baseline benchmark).",
+                warm_stats["excluded"],
+                warm_stats["total_recent"],
+            )
+        warm_context = memory_service.build_reconstruction_prompt()
+        if warm_context:
+            warm_start = time.time()
+            warm_local_context(warm_context)
+            warm_ms = (time.time() - warm_start) * 1000
+            log.info("[CHAT] Warmed TurboQuant context in %.0fms.", warm_ms)
+    else:
+        # Baseline engine does not use TurboQuant context warmup.
+        initialize_local_baseline_backend()
 
     retrieval_start = time.time()
     retrieved_chunks = retriever.search(normalized_message, top_k=2, rerank_k=6)
@@ -81,14 +95,17 @@ def process_local_chat_message(message: str) -> str:
     )
 
     llm_start = time.time()
-    response_text = generate_local_chat_answer(chat_messages)
+    if engine_normalized == "turboquant":
+        response_text = generate_local_chat_answer(chat_messages)
+    else:
+        response_text = generate_local_baseline_chat_answer(chat_messages)
     llm_ms = (time.time() - llm_start) * 1000
-    log.info("[CHAT] LLM response generated via local chat in %.0fms.", llm_ms)
+    log.info("[CHAT] LLM response generated via local chat (%s) in %.0fms.", engine_normalized, llm_ms)
 
-    memory_service.save(normalized_message, response_text)
+    memory_service.save(normalized_message, response_text, engine=engine_normalized)
 
     total_ms = (time.time() - start_time) * 1000
-    log.info("[CHAT] Local request complete in %.0fms.", total_ms)
+    log.info("[CHAT] Local request complete (%s) in %.0fms.", engine_normalized, total_ms)
     return response_text
 
 
@@ -124,7 +141,7 @@ def process_api_chat_message(message: str) -> str:
     llm_ms = (time.time() - llm_start) * 1000
     log.info("[CHAT] LLM response generated via gemini in %.0fms.", llm_ms)
 
-    memory_service.save(normalized_message, response_text)
+    memory_service.save(normalized_message, response_text, engine="gemini")
 
     total_ms = (time.time() - start_time) * 1000
     log.info("[CHAT] API request complete in %.0fms.", total_ms)
@@ -141,4 +158,7 @@ def process_chat_message(message: str, model_choice: str = "local") -> str:
     if model_choice == "gemini":
         return process_api_chat_message(message)
 
-    return process_local_chat_message(message)
+    if model_choice in {"local_baseline", "baseline"}:
+        return process_local_chat_message(message, engine="baseline")
+
+    return process_local_chat_message(message, engine="turboquant")

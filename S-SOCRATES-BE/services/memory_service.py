@@ -14,6 +14,7 @@ DEFAULT_RECONSTRUCTION_TURNS = 2
 DEFAULT_RECONSTRUCTION_CHARS = 420
 DEFAULT_API_CONTEXT_TURNS = 4
 DEFAULT_API_CONTEXT_CHARS = 1200
+DEFAULT_TURBO_WARM_ENGINES = {"turboquant", "local", "gemini"}
 
 
 def _trim_text(value: str, max_chars: int) -> str:
@@ -63,7 +64,7 @@ class MemoryService:
             log.warning("Created memory backup at %s", backup_path)
             return []
 
-    def save(self, user_msg: str, ai_msg: str) -> None:
+    def save(self, user_msg: str, ai_msg: str, engine: str = "unknown") -> None:
         if _is_low_quality_ai_response(ai_msg):
             log.warning("Skipped saving low-quality AI response to memory.")
             return
@@ -73,16 +74,28 @@ class MemoryService:
                 "timestamp": time.time(),
                 "user": user_msg,
                 "ai": ai_msg,
+                "engine": (engine or "unknown").strip().lower(),
             }
         )
 
         with self.filepath.open("w", encoding="utf-8") as file:
             json.dump(self.history, file, ensure_ascii=False, indent=4)
 
-    def _select_recent_history(self, max_turns: int) -> list[dict]:
+    def _normalize_engine(self, turn: dict) -> str:
+        raw = str(turn.get("engine", "")).strip().lower()
+        return raw or "unknown"
+
+    def _select_recent_history(
+        self,
+        max_turns: int,
+        include_engines: set[str] | None = None,
+    ) -> list[dict]:
         if not self.history:
             return []
-        return self.history[-max_turns:]
+        if not include_engines:
+            return self.history[-max_turns:]
+        filtered = [turn for turn in self.history if self._normalize_engine(turn) in include_engines]
+        return filtered[-max_turns:]
 
     def get_context_string(
         self,
@@ -126,8 +139,12 @@ class MemoryService:
         self,
         max_turns: int = DEFAULT_RECONSTRUCTION_TURNS,
         max_chars: int = DEFAULT_RECONSTRUCTION_CHARS,
+        include_engines: set[str] | None = None,
     ) -> str:
-        selected_history = self._select_recent_history(max_turns=max_turns)
+        selected_history = self._select_recent_history(
+            max_turns=max_turns,
+            include_engines=include_engines or DEFAULT_TURBO_WARM_ENGINES,
+        )
         if not selected_history:
             return ""
 
@@ -138,6 +155,22 @@ class MemoryService:
             context_lines.append(f"User: {_trim_text(turn.get('user', ''), max_chars=180)}")
             context_lines.append(f"Assistant: {_trim_text(turn.get('ai', ''), max_chars=220)}")
         return _trim_text("\n".join(context_lines), max_chars=max_chars)
+
+    def get_reconstruction_stats(
+        self,
+        max_turns: int = DEFAULT_RECONSTRUCTION_TURNS,
+        include_engines: set[str] | None = None,
+    ) -> dict:
+        selected_engines = include_engines or DEFAULT_TURBO_WARM_ENGINES
+        if max_turns <= 0:
+            return {"total_recent": 0, "selected": 0, "excluded": 0}
+        recent = self.history[-max_turns:] if self.history else []
+        selected = [turn for turn in recent if self._normalize_engine(turn) in selected_engines]
+        return {
+            "total_recent": len(recent),
+            "selected": len(selected),
+            "excluded": max(0, len(recent) - len(selected)),
+        }
 
 
 memory_service = MemoryService()
