@@ -98,6 +98,11 @@ class LocalBaselineRuntime:
         self._llm = None
         self._managed_process: Optional[subprocess.Popen] = None
         self._managed_command = None
+        self._stdout_handle = None
+        self._stderr_handle = None
+        self._logs_dir = BASE_DIR / "logs"
+        self._stdout_log_path = self._logs_dir / "baseline.stdout.log"
+        self._stderr_log_path = self._logs_dir / "baseline.stderr.log"
         self._status = {
             "phase": "stopped",
             "detail": "Local baseline runtime is stopped.",
@@ -187,7 +192,19 @@ class LocalBaselineRuntime:
             "--jinja",
         ]
         log.info("Starting local baseline runtime at %s using model %s", config.api_base, config.gguf_path)
-        return subprocess.Popen(cmd, cwd=str(BASE_DIR))
+        self._logs_dir.mkdir(parents=True, exist_ok=True)
+        self._stdout_handle = self._stdout_log_path.open("a", encoding="utf-8")
+        self._stderr_handle = self._stderr_log_path.open("a", encoding="utf-8")
+        self._stdout_handle.write(f"\n===== START {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+        self._stderr_handle.write(f"\n===== START {time.strftime('%Y-%m-%d %H:%M:%S')} =====\n")
+        self._stdout_handle.flush()
+        self._stderr_handle.flush()
+        return subprocess.Popen(
+            cmd,
+            stdout=self._stdout_handle,
+            stderr=self._stderr_handle,
+            cwd=str(BASE_DIR),
+        )
 
     def initialize(self, force_restart: bool = False) -> None:
         config = load_baseline_config()
@@ -247,6 +264,13 @@ class LocalBaselineRuntime:
                     process.kill()
                 except Exception:
                     pass
+            finally:
+                if self._stdout_handle is not None:
+                    self._stdout_handle.close()
+                    self._stdout_handle = None
+                if self._stderr_handle is not None:
+                    self._stderr_handle.close()
+                    self._stderr_handle = None
 
     def get_status(self) -> dict:
         config = load_baseline_config()
@@ -276,6 +300,8 @@ class LocalBaselineRuntime:
                 "updated_at": self._status["updated_at"],
                 "last_generate_ms": self._status["last_generate_ms"],
                 "last_error": self._status["last_error"],
+                "stdout_log_path": str(self._stdout_log_path),
+                "stderr_log_path": str(self._stderr_log_path),
             }
 
     def generate_chat(self, messages: list[dict]) -> str:

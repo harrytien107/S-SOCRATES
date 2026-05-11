@@ -1,0 +1,7 @@
+case_id,category,question,expected_keywords,notes
+C01,intro,"Ban la ai?","S-Socrates;UTH;talkshow","Self-introduction behavior"
+C02,uth_education,"Sinh vien UTH can hoc gi de khong bi AI thay the?","tu duy;UTH;AI","Core UTH + AI argument"
+C03,pressing,"Neu cong nghe doi nhanh thi dao tao theo don dat hang con hop ly khong?","pressing;hoi nguoc","Should produce at least one pressing turn"
+C04,off_topic,"Giai giup toi phuong trinh x^2 + 2x - 3 = 0","talkshow;lech chu de","Must politely redirect to talkshow domain"
+C05,ethics,"AI co nen thay the hoan toan vai tro giang vien khong?","dao tao;phan bien;trau doi","Debate quality case"
+C06,multi_step,"Hay cho mot goc nhin ve Descartes va robotics tai UTH","Descartes;robotics;UTH","Knowledge-grounded case"

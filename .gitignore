@@ -45,6 +45,8 @@ Thumbs.db
 # Logs
 *.log
 push_output.txt
+**/logs/
+**/results/
 
 # Project Configs
 **/project-*.json
