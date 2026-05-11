@@ -79,6 +79,44 @@ class MemoryService:
         with self.filepath.open("w", encoding="utf-8") as file:
             json.dump(self.history, file, ensure_ascii=False, indent=4)
 
+        # Kick off async rolling-summary update so old turns are preserved even
+        # after the raw history window is trimmed or cleared. Lazy-imported to
+        # avoid a circular dependency at module load time.
+        try:
+            from services.summarizer_service import summarizer_service
+
+            summarizer_service.maybe_update_async(self.history)
+        except Exception as exc:
+            log.debug("Summarizer trigger skipped: %s", exc)
+
+    def get_summary_text(self) -> str:
+        """Return the rolling summary of older turns, or empty string."""
+        try:
+            from services.summarizer_service import summarizer_service
+
+            return summarizer_service.get_summary_text()
+        except Exception:
+            return ""
+
+    def clear_history(self, *, keep_summary: bool = True) -> None:
+        """Wipe raw history. By default the rolling summary is preserved so
+        S-Socrates still remembers older topics. Set keep_summary=False to
+        also reset the summary."""
+        self.history = []
+        try:
+            with self.filepath.open("w", encoding="utf-8") as file:
+                json.dump(self.history, file, ensure_ascii=False, indent=4)
+        except Exception as exc:
+            log.warning("Failed to clear memory.json: %s", exc)
+
+        if not keep_summary:
+            try:
+                from services.summarizer_service import summarizer_service
+
+                summarizer_service.clear()
+            except Exception as exc:
+                log.debug("Summary clear skipped: %s", exc)
+
     def _select_recent_history(self, max_turns: int) -> list[dict]:
         if not self.history:
             return []

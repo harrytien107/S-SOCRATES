@@ -70,6 +70,17 @@ def _parse_history_turns(history_context: str) -> list[tuple[str, str]]:
     return [(u, a) for u, a in pairs if u and a]
 
 
+def _append_summary_block(system_content: str, memory_summary: str) -> str:
+    summary = (memory_summary or "").strip()
+    if not summary:
+        return system_content
+    return (
+        system_content
+        + "\n\nTÓM TẮT HỘI THOẠI TRƯỚC ĐÓ (các lượt cũ đã bị rút gọn, chỉ để tham khảo ngữ cảnh):\n"
+        + summary
+    )
+
+
 def build_local_chat_messages(
     *,
     system_prompt: str,
@@ -77,6 +88,7 @@ def build_local_chat_messages(
     history_context: str,
     retrieved_chunks: list[dict],
     user_message: str,
+    memory_summary: str = "",
 ) -> list[dict[str, Any]]:
     """Build an OpenAI-chat-style message list for the local LLM.
 
@@ -96,6 +108,7 @@ def build_local_chat_messages(
             + "\n\nTRI THỨC NỀN (nội bộ - chỉ dùng để trả lời, không trích nguyên văn):\n"
             + knowledge_block
         )
+    system_content = _append_summary_block(system_content, memory_summary)
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
 
@@ -118,6 +131,7 @@ def build_api_chat_messages(
     history_context: str,
     retrieved_chunks: list[dict],
     user_message: str,
+    memory_summary: str = "",
 ) -> list[dict[str, Any]]:
     knowledge_block = _format_knowledge_block(
         retrieved_chunks,
@@ -132,6 +146,7 @@ def build_api_chat_messages(
             + "\n\nTRI THỨC NỀN (nội bộ - chỉ dùng để trả lời, không trích nguyên văn):\n"
             + knowledge_block
         )
+    system_content = _append_summary_block(system_content, memory_summary)
 
     messages: list[dict[str, Any]] = [{"role": "system", "content": system_content}]
 
@@ -176,6 +191,7 @@ def build_api_rag_prompt(
     history_context: str,
     retrieved_chunks: list[dict],
     user_message: str,
+    memory_summary: str = "",
 ) -> str:
     """Legacy single-prompt builder for Gemini API path (still uses single prompt string)."""
     knowledge_block = _format_knowledge_block(
@@ -184,10 +200,15 @@ def build_api_rag_prompt(
         max_chars_per_item=700,
     ) or "(Không có tri thức bổ sung.)"
     history_block = _trim_text(history_context, max_chars=1200) or "(Chưa có lịch sử.)"
+    summary_block = _trim_text(memory_summary, max_chars=700)
+    summary_section = (
+        f"TÓM TẮT HỘI THOẠI TRƯỚC ĐÓ:\n{summary_block}\n\n" if summary_block else ""
+    )
     user_block = _trim_text(user_message, max_chars=600)
     return (
         f"{system_prompt}\n\n"
         f"TRI THỨC NỀN:\n{knowledge_block}\n\n"
+        f"{summary_section}"
         f"LỊCH SỬ GẦN NHẤT:\n{history_block}\n\n"
         f"Câu hỏi hiện tại: {user_block}\n\n"
         f"S-Socrates trả lời (3-5 câu, có ít nhất 1 câu pressing):"

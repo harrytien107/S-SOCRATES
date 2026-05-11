@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import threading
 import time
@@ -58,6 +59,12 @@ class TurboQuantConfig:
     ctx: int
     max_tokens: int
     reasoning_budget: int
+    draft_gguf_path: str
+    draft_ngl: int
+    draft_ctx: int
+    draft_max: int
+    draft_min: int
+    draft_p_min: float
 
     @property
     def health_url(self) -> str:
@@ -66,6 +73,10 @@ class TurboQuantConfig:
     @property
     def api_base(self) -> str:
         return f"http://{self.host}:{self.port}/v1"
+
+    @property
+    def speculative_enabled(self) -> bool:
+        return bool(self.draft_gguf_path) and Path(self.draft_gguf_path).exists()
 
 
 def load_turboquant_config() -> TurboQuantConfig:
@@ -82,6 +93,12 @@ def load_turboquant_config() -> TurboQuantConfig:
         ctx=int(os.getenv("TURBOQUANT_CTX", "8192")),
         max_tokens=int(os.getenv("LOCAL_LLM_MAX_TOKENS", "256")),
         reasoning_budget=int(os.getenv("TURBOQUANT_REASONING_BUDGET", "0")),
+        draft_gguf_path=os.getenv("LOCAL_LLM_DRAFT_GGUF_PATH", "").strip(),
+        draft_ngl=int(os.getenv("LOCAL_LLM_DRAFT_NGL", "99")),
+        draft_ctx=int(os.getenv("LOCAL_LLM_DRAFT_CTX", "2048")),
+        draft_max=int(os.getenv("LOCAL_LLM_DRAFT_MAX", "16")),
+        draft_min=int(os.getenv("LOCAL_LLM_DRAFT_MIN", "0")),
+        draft_p_min=float(os.getenv("LOCAL_LLM_DRAFT_P_MIN", "0.75")),
     )
 
 
@@ -201,6 +218,42 @@ class TurboQuantRuntime:
             str(config.reasoning_budget),
             "--jinja",
         ]
+
+        # Speculative decoding: only enable when a valid draft model path is given.
+        # Controlled by LOCAL_LLM_DRAFT_GGUF_PATH in .env so users with different
+        # VRAM budgets (e.g. 8GB vs 5GB) can toggle it by leaving the path empty.
+        if config.draft_gguf_path:
+            if not Path(config.draft_gguf_path).exists():
+                log.warning(
+                    "Draft model %s not found; skipping speculative decoding.",
+                    config.draft_gguf_path,
+                )
+            else:
+                cmd += [
+                    "-md",
+                    config.draft_gguf_path,
+                    "-ngld",
+                    str(config.draft_ngl),
+                    "-cd",
+                    str(config.draft_ctx),
+                    "--draft-max",
+                    str(config.draft_max),
+                    "--draft-min",
+                    str(config.draft_min),
+                    "--draft-p-min",
+                    str(config.draft_p_min),
+                ]
+                log.info(
+                    "Speculative decoding ENABLED: draft=%s ngld=%s cd=%s draft-max=%s p-min=%s",
+                    config.draft_gguf_path,
+                    config.draft_ngl,
+                    config.draft_ctx,
+                    config.draft_max,
+                    config.draft_p_min,
+                )
+        else:
+            log.info("Speculative decoding disabled (LOCAL_LLM_DRAFT_GGUF_PATH empty).")
+
         log.info("Starting TurboQuant runtime at %s using model %s", config.api_base, config.gguf_path)
         self._logs_dir.mkdir(parents=True, exist_ok=True)
         self._stdout_handle = self._stdout_log_path.open("a", encoding="utf-8")
@@ -344,6 +397,15 @@ class TurboQuantRuntime:
                 "cache_type": config.cache_type,
                 "max_tokens": config.max_tokens,
                 "reasoning_budget": config.reasoning_budget,
+                "speculative_decoding": {
+                    "enabled": config.speculative_enabled,
+                    "draft_model": config.draft_gguf_path or None,
+                    "draft_ngl": config.draft_ngl,
+                    "draft_ctx": config.draft_ctx,
+                    "draft_max": config.draft_max,
+                    "draft_min": config.draft_min,
+                    "draft_p_min": config.draft_p_min,
+                },
                 "phase": phase,
                 "detail": detail,
                 "context_warmed": self._context_warmed,
@@ -530,6 +592,68 @@ _TRAILING_CUT_MARKERS = (
     "\n##",
 )
 
+# Patterns that Llama-3.1-Instruct likes to prepend even when system prompt forbids.
+# Applied iteratively until a full sentence of actual content appears.
+_APOLOGY_PREAMBLE_RE = re.compile(
+    r"^\s*(?:"
+    r"em\s+xin\s+l[ỗo]i[^.!?\n]*[.!?]\s*"
+    r"|xin\s+l[ỗo]i[^.!?\n]*[.!?]\s*"
+    r"|em\s+xin\s+ph[ée]p[^.!?\n]*[.!?]\s*"
+    r"|xin\s+ph[ée]p[^.!?\n]*[.!?]\s*"
+    r")",
+    re.IGNORECASE,
+)
+
+# "Em xin tự giới thiệu về bản thân:" / "Đây là câu trả lời của em:" etc.
+# Cut up to and including the colon.
+_META_PREAMBLE_RE = re.compile(
+    r"^\s*(?:"
+    r"em\s+xin\s+(?:t[ựu]\s+)?gi[ớo]i\s+thi[ệe]u[^:\n]*:"
+    r"|d[ưu][ớo]i\s+đây\s+là[^:\n]*:"
+    r"|đây\s+là\s+c[âa]u\s+tr[ảa]\s+l[ờo]i[^:\n]*:"
+    r"|em\s+tr[ảa]\s+l[ờo]i\s+nh[ưu]\s+sau[^:\n]*:"
+    r")\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_wrapping_quotes(text: str) -> str:
+    """Remove a single pair of wrapping double/smart quotes around the entire reply.
+
+    Handles a trailing punctuation after the closing quote (e.g. `"..."`. or `"...".`)
+    which Llama-3 sometimes emits when treating few-shot answers as a literal script.
+    """
+
+    stripped = text.strip()
+    if len(stripped) < 2:
+        return stripped
+
+    pairs = [('"', '"'), ("\u201c", "\u201d"), ("\u00ab", "\u00bb")]
+    trailing_punct = ".!?,;:"
+
+    for left, right in pairs:
+        if not stripped.startswith(left):
+            continue
+
+        end_idx = stripped.rfind(right)
+        if end_idx <= 0:
+            continue
+
+        after_quote = stripped[end_idx + 1 :].strip()
+        if after_quote and any(ch not in trailing_punct for ch in after_quote):
+            continue
+
+        inner = stripped[1:end_idx]
+        if inner.count(left) != inner.count(right):
+            continue
+
+        rebuilt = inner.strip()
+        if after_quote:
+            rebuilt = rebuilt.rstrip(trailing_punct + " ") + after_quote
+        return rebuilt
+
+    return stripped
+
 
 def _clean_llm_output(text: str) -> str:
     """Strip any hallucinated follow-up turns and collapse repetitive sentences."""
@@ -547,8 +671,18 @@ def _clean_llm_output(text: str) -> str:
         if cleaned.lower().startswith(prefix.lower()):
             cleaned = cleaned[len(prefix):].lstrip()
 
-    if cleaned.startswith('"') and cleaned.endswith('"') and cleaned.count('"') == 2:
-        cleaned = cleaned[1:-1].strip()
+    # Remove apologetic + meta preambles iteratively (model sometimes stacks them,
+    # e.g. "Em xin lỗi, Giáo sư! Em xin tự giới thiệu: ...").
+    for _ in range(3):
+        before = cleaned
+        cleaned = _APOLOGY_PREAMBLE_RE.sub("", cleaned, count=1).lstrip()
+        cleaned = _META_PREAMBLE_RE.sub("", cleaned, count=1).lstrip()
+        if cleaned == before:
+            break
+
+    # After stripping preambles the remaining body is sometimes wrapped in
+    # quotes (model treating few-shot answer as a literal script).
+    cleaned = _strip_wrapping_quotes(cleaned)
 
     sentences: list[str] = []
     seen_normalized: set[str] = set()

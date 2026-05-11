@@ -477,6 +477,61 @@ main {
   line-height: 1.4;
 }
 
+.memory-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.6rem 0.7rem;
+  background: rgba(0, 0, 0, 0.18);
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.memory-summary-text {
+  min-height: 60px;
+  max-height: 140px;
+  overflow-y: auto;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.memory-summary-text:empty::before {
+  content: attr(data-placeholder);
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+}
+
+.memory-reset-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.memory-reset-row input[type="checkbox"] {
+  accent-color: var(--cyan);
+  cursor: pointer;
+}
+
+.reset-conversation-btn {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.18), rgba(153, 27, 27, 0.12));
+  border: 1px solid rgba(239, 68, 68, 0.45);
+  color: #fca5a5;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.reset-conversation-btn:hover {
+  background: linear-gradient(135deg, rgba(239, 68, 68, 0.3), rgba(153, 27, 27, 0.2));
+}
+
 .emotion-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);

@@ -15,6 +15,7 @@ from fastapi import (
 )
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -364,6 +365,111 @@ async def root():
     return {"status": "S-Socrates API is running clean and fast!"}
 
 
+def _build_health_payload() -> tuple[dict, bool]:
+    """Return (payload, healthy_flag). `healthy_flag` is False if any
+    required component for the current deployment mode is down."""
+
+    # --- Gemini (cloud) ---
+    gemini_ok = False
+    gemini_detail: str
+    gemini_model: str | None = None
+    try:
+        gemini_model = gemini_service.current_model
+        gemini_ok = gemini_model is not None
+        gemini_detail = (
+            f"initialized ({gemini_model})"
+            if gemini_ok
+            else "engine not initialized (missing GEMINI_API_KEY or model)"
+        )
+    except Exception as exc:
+        gemini_detail = f"error: {exc}"
+
+    # --- TurboQuant (local) ---
+    turbo_ok = False
+    turbo_phase = "disabled"
+    turbo_detail = "Local AI disabled in this deployment mode."
+    if supports_local_ai():
+        try:
+            status_payload = get_local_backend_status()
+            turbo_phase = str(status_payload.get("phase", "unknown"))
+            turbo_ok = bool(status_payload.get("ready", False))
+            turbo_detail = str(status_payload.get("detail", "") or turbo_phase)
+        except Exception as exc:
+            turbo_phase = "error"
+            turbo_detail = f"error: {exc}"
+
+    # --- Retrieval (RAG) ---
+    retrieval_ok = False
+    retrieval_detail: str
+    retrieval_vectors = 0
+    try:
+        stats = retriever.stats()
+        retrieval_vectors = int(stats.get("vector_count", 0))
+        retrieval_ok = retrieval_vectors > 0
+        retrieval_detail = (
+            f"{retrieval_vectors} vectors indexed"
+            if retrieval_ok
+            else "quantized index empty"
+        )
+    except Exception as exc:
+        retrieval_detail = f"error: {exc}"
+
+    # --- Robot WebSocket ---
+    robot_connected = robot_ws_manager.is_connected()
+    last_seen_ns = getattr(robot_ws_manager, "last_seen_ns", 0) or 0
+    last_seen_ago_ms: int | None = None
+    if last_seen_ns:
+        last_seen_ago_ms = int((time.time_ns() - last_seen_ns) / 1_000_000)
+
+    payload = {
+        "gemini": "ok" if gemini_ok else "down",
+        "turboquant": "ok" if turbo_ok else "down",
+        "retrieval": "ok" if retrieval_ok else "down",
+        "robot_ws": "connected" if robot_connected else "disconnected",
+        "deployment_mode": DEPLOYMENT_MODE,
+        "details": {
+            "gemini": {
+                "ready": gemini_ok,
+                "model": gemini_model,
+                "detail": gemini_detail,
+            },
+            "turboquant": {
+                "ready": turbo_ok,
+                "phase": turbo_phase,
+                "detail": turbo_detail,
+                "supported": supports_local_ai(),
+            },
+            "retrieval": {
+                "ready": retrieval_ok,
+                "vector_count": retrieval_vectors,
+                "detail": retrieval_detail,
+            },
+            "robot_ws": {
+                "connected": robot_connected,
+                "last_seen_ago_ms": last_seen_ago_ms,
+            },
+        },
+    }
+
+    # Healthy = all components *required* by current deployment mode are up.
+    # Retrieval is always required. Gemini required for hybrid/api.
+    # TurboQuant required for hybrid/local. Robot WS is informational.
+    required_ok = retrieval_ok
+    if supports_api_ai():
+        required_ok = required_ok and gemini_ok
+    if supports_local_ai():
+        required_ok = required_ok and turbo_ok
+
+    return payload, required_ok
+
+
+@app.get("/healthz")
+async def healthz():
+    payload, healthy = await run_in_threadpool(_build_health_payload)
+    payload["status"] = "ok" if healthy else "degraded"
+    return JSONResponse(status_code=200 if healthy else 503, content=payload)
+
+
 @app.post("/stt")
 async def speech_to_text(file: UploadFile = File(...)):
     try:
@@ -451,6 +557,36 @@ async def rebuild_retrieval_index():
     await run_in_threadpool(retriever.initialize, True)
     stats = await run_in_threadpool(retriever.stats)
     return {"status": "Quantized retrieval index rebuilt", "retrieval": stats}
+
+
+@app.get("/memory/summary")
+async def get_memory_summary():
+    from services.summarizer_service import summarizer_service
+
+    return {
+        "status": "ok",
+        "summarizer": await run_in_threadpool(summarizer_service.get_status),
+        "history_length": len(memory_service.history),
+    }
+
+
+@app.delete("/memory/summary")
+async def clear_memory_summary():
+    from services.summarizer_service import summarizer_service
+
+    await run_in_threadpool(summarizer_service.clear)
+    return {"status": "Conversation summary cleared."}
+
+
+@app.delete("/memory")
+async def clear_memory(keep_summary: bool = True):
+    """Wipe raw conversation history. Summary is preserved unless keep_summary=false."""
+    await run_in_threadpool(memory_service.clear_history, keep_summary=keep_summary)
+    return {
+        "status": "Memory cleared.",
+        "kept_summary": keep_summary,
+        "history_length": len(memory_service.history),
+    }
 
 
 async def dispatch_robot_request(path: str, payload: dict | None = None):

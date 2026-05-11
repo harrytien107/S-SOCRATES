@@ -76,6 +76,56 @@ class GeminiService:
 
         return str(getattr(response, "text", response))
 
+    def generate_chat(self, messages: list[dict]) -> str:
+        if self._llm is None:
+            raise RuntimeError(
+                "Gemini engine is not available. "
+                "Please verify GEMINI_API_KEY and the selected Gemini model."
+            )
+
+        if not messages:
+            return ""
+
+        try:
+            from llama_index.core.llms import ChatMessage, MessageRole
+        except ImportError:
+            from llama_index.llms import ChatMessage, MessageRole  # type: ignore
+
+        role_map = {
+            "system": MessageRole.SYSTEM,
+            "user": MessageRole.USER,
+            "assistant": MessageRole.ASSISTANT,
+        }
+        chat_messages = [
+            ChatMessage(
+                role=role_map.get(m.get("role", "user"), MessageRole.USER),
+                content=m.get("content", ""),
+            )
+            for m in messages
+        ]
+
+        log.info(
+            "Routing to Gemini chat (Cloud) [%s] with %d messages...",
+            self._current_model,
+            len(chat_messages),
+        )
+        try:
+            response = self._llm.chat(chat_messages)
+        except Exception as exc:
+            error_type = exc.__class__.__name__
+            error_text = str(exc)
+            if error_type == "ResourceExhausted" or "RESOURCE_EXHAUSTED" in error_text:
+                raise RuntimeError(
+                    "Gemini quota exceeded for the current API key/project. "
+                    "Please wait and retry, or switch to the local model."
+                ) from exc
+            raise RuntimeError(f"Gemini chat request failed: {error_text}") from exc
+
+        message = getattr(response, "message", None)
+        if message is not None and getattr(message, "content", None) is not None:
+            return str(message.content)
+        return str(getattr(response, "text", response))
+
 
 gemini_service = GeminiService()
 gemini_service.initialize()

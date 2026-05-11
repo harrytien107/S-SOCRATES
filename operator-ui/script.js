@@ -7,6 +7,7 @@ let localRuntimeStatus = null;
 let localRuntimePollTimer = null;
 let deploymentMode = 'hybrid';
 let supportedModelModes = [];
+let memorySummaryPollTimer = null;
 
 // Remote Mic Control State
 let isMicActive = false;
@@ -710,6 +711,11 @@ window.onload = () => {
     updateAiSourceUI();
     updateSendButton();
     updateMicButtons();
+    refreshMemorySummary();
+    if (memorySummaryPollTimer) {
+        clearInterval(memorySummaryPollTimer);
+    }
+    memorySummaryPollTimer = setInterval(refreshMemorySummary, 15000);
     addLog("Console Ready.");
     connectWebSocket();
 };
@@ -1056,5 +1062,64 @@ async function sendToRobot(event) {
         addLog(`✕ Send Failed.`);
         statusMessage("Send Failed", "error");
         btn.disabled = false;
+    }
+}
+
+// ===== Session Memory (rolling summary + reset) =====
+async function refreshMemorySummary() {
+    const base = getApiBase();
+    const textEl = document.getElementById('memory-summary-text');
+    const metaEl = document.getElementById('memory-summary-meta');
+    if (!textEl || !metaEl) return;
+
+    try {
+        const res = await fetch(`${base}/memory/summary`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const summarizer = data.summarizer || {};
+        const summary = (summarizer.summary || summarizer.summary_text || '').trim();
+        const turns = Number(data.history_length || 0);
+        const lastUpdated = summarizer.updated_at
+            ? new Date(summarizer.updated_at * 1000).toLocaleTimeString('vi-VN')
+            : null;
+
+        textEl.innerText = summary;
+
+        const parts = [`${turns} turns`];
+        parts.push(summary ? `${summary.length} chars` : 'summary empty');
+        if (summarizer.enabled === false) parts.push('disabled');
+        if (lastUpdated) parts.push(`updated ${lastUpdated}`);
+        metaEl.innerText = parts.join(' · ');
+    } catch (err) {
+        metaEl.innerText = 'Summary unavailable';
+    }
+}
+
+async function resetConversation() {
+    const wipeSummaryEl = document.getElementById('reset-wipe-summary');
+    const wipeSummary = wipeSummaryEl ? wipeSummaryEl.checked : true;
+
+    const confirmMsg = wipeSummary
+        ? 'Reset conversation?\n\nSẽ xoá LỊCH SỬ THÔ và CẢ rolling summary. S-Socrates sẽ quên sạch nội dung trước đó.\n\nDùng trước khi bắt đầu talkshow mới.'
+        : 'Reset conversation?\n\nSẽ xoá lịch sử thô nhưng GIỮ LẠI rolling summary (AI vẫn nhớ lờ mờ các chủ đề cũ).';
+
+    if (!window.confirm(confirmMsg)) return;
+
+    const base = getApiBase();
+    try {
+        const res = await fetch(
+            `${base}/memory?keep_summary=${wipeSummary ? 'false' : 'true'}`,
+            { method: 'DELETE' }
+        );
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const mode = wipeSummary ? 'FULL WIPE (history + summary)' : 'history only, summary kept';
+        addLog(`🧹 Conversation reset · ${mode} · remaining_turns=${data.history_length}`);
+        statusMessage(wipeSummary ? 'Memory wiped' : 'History cleared', 'success');
+        await refreshMemorySummary();
+    } catch (err) {
+        addLog(`⚠️ Reset conversation failed: ${err?.message || 'unknown error'}`);
+        statusMessage('Reset failed', 'error');
     }
 }

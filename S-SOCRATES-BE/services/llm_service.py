@@ -34,6 +34,10 @@ def generate_api_answer(prompt: str) -> str:
     return gemini_service.generate(prompt)
 
 
+def generate_api_chat_answer(messages: list[dict]) -> str:
+    return gemini_service.generate_chat(messages)
+
+
 def generate_answer(prompt: str, model_choice: str = "local") -> str:
     if model_choice == "gemini":
         return generate_api_answer(prompt)

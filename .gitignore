@@ -72,3 +72,13 @@ S-SOCRATES-APP/voice_chat_app/windows/flutter/
 S-SOCRATES-APP/voice_chat_app/.flutter-plugins-dependencies
 S-SOCRATES-dev/
 S-SOCRATES-BE/operator_settings.json
+S-SOCRATES-BE/memory.json
+S-SOCRATES-BE/memory.json.backup
+S-SOCRATES-BE/memory_summary.json
+
+# Local chat exports & workspace files
+Chathistory/
+*.code-workspace
+
+# Backend rotating log files
+S-SOCRATES-BE/logs/

@@ -6,7 +6,7 @@
     <link rel="icon" type="image/x-icon" href="assets/logo_spinner.png"/>
     <title>S-SOCRATES | OPERATOR CONSOLE</title>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=JetBrains+Mono&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css?v=20260401d">
+    <link rel="stylesheet" href="style.css?v=20260423a">
 </head>
 <body>
     <header>
@@ -124,7 +124,23 @@
                     <button type="button" class="send-btn stop-tts-btn" id="stop-tts-btn" onclick="stopRobotTTS(event)" style="background: var(--bg-card); border: 1px solid var(--border); color: var(--danger); font-size: 0.8rem;">🛑 DỪNG ĐỌC (STOP TTS)</button>
                 </div>
                 <div id="last-sent-status">Waiting for action...</div>
-                
+
+                <div class="panel-header panel-header-inline">
+                    Session Memory
+                    <div class="panel-header-actions">
+                        <span id="memory-summary-meta" class="panel-header-meta">0 turns · summary empty</span>
+                        <button type="button" class="settings-btn compact-btn" onclick="refreshMemorySummary()">↻ REFRESH</button>
+                    </div>
+                </div>
+                <div class="memory-panel">
+                    <div id="memory-summary-text" class="memory-summary-text" data-placeholder="(Chưa có tóm tắt. S-Socrates sẽ tự sinh summary sau vài lượt đối đáp.)"></div>
+                    <label class="memory-reset-row">
+                        <input type="checkbox" id="reset-wipe-summary" checked>
+                        <span>Xoá luôn rolling summary (recommended giữa 2 talkshow)</span>
+                    </label>
+                    <button type="button" class="settings-btn reset-conversation-btn" onclick="resetConversation()">🧹 RESET CONVERSATION</button>
+                </div>
+
                 <div class="panel-header panel-header-inline">
                     System Logs
                     <button type="button" class="settings-btn compact-btn" id="expand-log-btn" onclick="toggleLogExpand()">⤡ COLLAPSE</button>
@@ -248,6 +264,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260402f"></script>
+    <script src="script.js?v=20260423a"></script>
 </body>
 </html>
