@@ -1,13 +1,13 @@
 param(
     [string]$BackendRoot = "",
-    [string]$SoftwareRoot = "G:\Software",
+    [string]$SoftwareRoot = "",
     [string]$WorkspaceRoot = "",
     [string]$VenvRoot = "",
     [string]$TurboQuantRepo = "https://github.com/spiritbuun/llama-cpp-turboquant-cuda.git",
     [string]$TurboQuantBranch = "feature/turboquant-kv-cache",
-    [Parameter(Mandatory = $true)]
-    [string]$ModelPath,
+    [string]$ModelPath = "",
     [string]$CudaArch = "86",
+    [string]$CudaVersion = "12.5",
     [int]$LocalPort = 8011,
     [int]$TurboQuantCtx = 8192,
     [string]$TurboQuantCacheType = "turbo2",
@@ -19,21 +19,70 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+# Read key/value pairs from .env and expose them to the current PowerShell process.
+function Import-DotEnvValues {
+    param([string]$EnvFilePath)
+    $values = @{}
+    if (-not (Test-Path $EnvFilePath)) {
+        return $values
+    }
+    foreach ($line in Get-Content -Path $EnvFilePath) {
+        $trimmed = $line.Trim()
+        if (-not $trimmed -or $trimmed.StartsWith("#") -or $trimmed -notmatch "=") {
+            continue
+        }
+        $parts = $trimmed.Split("=", 2)
+        $key = $parts[0].Trim()
+        $value = $parts[1].Trim().Trim('"').Trim("'")
+        $values[$key] = $value
+        [Environment]::SetEnvironmentVariable($key, $value, "Process")
+    }
+    return $values
+}
+
+# Get a string setting from parsed .env, process env, or a fallback value.
+function Get-SettingOrDefault {
+    param([hashtable]$EnvMap, [string]$Name, [string]$DefaultValue = "")
+    if ($EnvMap.ContainsKey($Name) -and -not [string]::IsNullOrWhiteSpace($EnvMap[$Name])) {
+        return [string]$EnvMap[$Name]
+    }
+    $fromEnv = [Environment]::GetEnvironmentVariable($Name)
+    if (-not [string]::IsNullOrWhiteSpace($fromEnv)) {
+        return $fromEnv
+    }
+    return $DefaultValue
+}
+
+# Get an integer setting from parsed .env, process env, or a fallback value.
+function Get-SettingIntOrDefault {
+    param([hashtable]$EnvMap, [string]$Name, [int]$DefaultValue)
+    $raw = Get-SettingOrDefault -EnvMap $EnvMap -Name $Name
+    $parsed = 0
+    if ([int]::TryParse($raw, [ref]$parsed)) {
+        return $parsed
+    }
+    return $DefaultValue
+}
+
+# Print a visible setup step header.
 function Write-Step([string]$Message) {
     Write-Host ""
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
+# Ensure winget is available before trying to install dependencies.
 function Require-Winget {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw "winget is required. Install App Installer from Microsoft Store first."
     }
 }
 
+# Check whether a command can be resolved from the current PATH.
 function Test-CommandAvailable([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+# Install a winget package when the matching command is not already available.
 function Install-WingetPackage {
     param(
         [Parameter(Mandatory = $true)][string]$Id,
@@ -82,6 +131,32 @@ function Install-WingetPackage {
     }
 }
 
+# Try common winget package ids for a specific CUDA Toolkit version.
+function Install-CudaToolkit {
+    param(
+        [Parameter(Mandatory = $true)][string]$Version
+    )
+
+    $cudaPackageIds = @(
+        "Nvidia.CUDA.Toolkit.$Version",
+        "Nvidia.CUDA.$Version",
+        "Nvidia.CUDA"
+    )
+
+    foreach ($packageId in $cudaPackageIds) {
+        Write-Host "Trying CUDA package: $packageId"
+        try {
+            Install-WingetPackage -Id $packageId
+            return
+        } catch {
+            Write-Host "CUDA package '$packageId' was not installed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+
+    throw "Failed to install CUDA Toolkit $Version via winget. Install CUDA Toolkit $Version manually, then rerun with -SkipCudaInstall."
+}
+
+# Locate a Python executable that can create the backend virtual environment.
 function Find-PythonExe {
     param(
         [Parameter(Mandatory = $true)][string]$PreferredPythonDir
@@ -103,6 +178,7 @@ function Find-PythonExe {
     throw "Python 3.11 was not found."
 }
 
+# Locate nvcc.exe from PATH or common CUDA installation directories.
 function Find-NvccPath {
     param(
         [Parameter(Mandatory = $true)][string]$SoftwareRoot
@@ -132,6 +208,35 @@ function Find-NvccPath {
     return $null
 }
 
+# Find a VS2022/MSVC host compiler that is supported by CUDA 12.x.
+function Find-MsvcClPath {
+    param(
+        [Parameter(Mandatory = $true)][string]$VsBuildToolsRoot
+    )
+
+    $msvcRoots = @(
+        (Join-Path $VsBuildToolsRoot "VC\Tools\MSVC"),
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC",
+        "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC",
+        "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Tools\MSVC"
+    ) | Where-Object { Test-Path $_ }
+
+    $toolsets = foreach ($root in $msvcRoots) {
+        Get-ChildItem -Path $root -Directory -ErrorAction SilentlyContinue
+    }
+    $toolsets = $toolsets | Sort-Object Name -Descending
+    foreach ($toolset in $toolsets) {
+        $cl = Join-Path $toolset.FullName "bin\Hostx64\x64\cl.exe"
+        if (Test-Path $cl) {
+            return $cl
+        }
+    }
+
+    return $null
+}
+
+# Find the VS2022 developer environment script used to build CUDA code.
 function Find-VsDevCmd {
     param(
         [Parameter(Mandatory = $true)][string]$VsBuildToolsRoot
@@ -139,7 +244,9 @@ function Find-VsDevCmd {
 
     $candidates = @(
         (Join-Path $VsBuildToolsRoot "Common7\Tools\VsDevCmd.bat"),
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat",
         "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat",
+        "C:\Program Files (x86)\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat",
         "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat"
     )
 
@@ -152,11 +259,21 @@ function Find-VsDevCmd {
     return $null
 }
 
+# Check whether cl.exe is already available in the active shell.
+function Test-MsvcReady {
+    return [bool](Get-Command cl.exe -ErrorAction SilentlyContinue)
+}
+
+# Run a command inside the VS developer shell so CMake can see MSVC/CUDA tools.
 function Run-CmdInVsDevShell {
     param(
-        [Parameter(Mandatory = $true)][string]$VsDevCmd,
+        [string]$VsDevCmd = "",
         [Parameter(Mandatory = $true)][string]$Command
     )
+
+    if (-not $VsDevCmd) {
+        throw "VS2022 VsDevCmd.bat was not found. CUDA 12.5 requires MSVC 2017-2022, so do not build with Visual Studio 2026."
+    }
 
     $fullCommand = "call `"$VsDevCmd`" -arch=x64 && $Command"
     & cmd.exe /c $fullCommand
@@ -165,6 +282,7 @@ function Run-CmdInVsDevShell {
     }
 }
 
+# Checkout the preferred TurboQuant branch, falling back to master if needed.
 function Resolve-TurboQuantBranch {
     param(
         [Parameter(Mandatory = $true)][string]$RepoDir,
@@ -192,6 +310,7 @@ function Resolve-TurboQuantBranch {
     throw "Could not find a usable TurboQuant branch on origin."
 }
 
+# Add or replace a single key in .env.
 function Set-DotEnvValue {
     param(
         [Parameter(Mandatory = $true)][string]$EnvFile,
@@ -208,20 +327,26 @@ function Set-DotEnvValue {
         $lines = @()
     }
 
+    $newLine = "$Key=$Value"
+    $outputLines = @()
     $updated = $false
     for ($i = 0; $i -lt $lines.Count; $i++) {
-        if ($lines[$i].StartsWith("$Key=")) {
-            $lines[$i] = "$Key=$Value"
-            $updated = $true
-            break
+        $line = [string]$lines[$i]
+        if ($line -match "^\s*$([regex]::Escape($Key))\s*=") {
+            if (-not $updated) {
+                $outputLines += $newLine
+                $updated = $true
+            }
+            continue
         }
+        $outputLines += $line
     }
 
     if (-not $updated) {
-        $lines += "$Key=$Value"
+        $outputLines += $newLine
     }
 
-    Set-Content -Path $EnvFile -Value $lines -Encoding UTF8
+    Set-Content -Path $EnvFile -Value $outputLines -Encoding UTF8
 }
 
 Require-Winget
@@ -235,12 +360,36 @@ if (-not $BackendRoot) {
 }
 
 $BackendRoot = (Resolve-Path $BackendRoot).Path
+$EnvFile = Join-Path $BackendRoot ".env"
+$envMap = Import-DotEnvValues -EnvFilePath $EnvFile
+
+if (-not $SoftwareRoot) {
+    $SoftwareRoot = Get-SettingOrDefault -EnvMap $envMap -Name "SETUP_SOFTWARE_ROOT" -DefaultValue "G:\Software"
+}
 $SoftwareRoot = [System.IO.Path]::GetFullPath($SoftwareRoot)
 if (-not $WorkspaceRoot) {
-    $WorkspaceRoot = Join-Path $SoftwareRoot "S-SOCRATES\turboquant-workspace"
+    $WorkspaceRoot = Get-SettingOrDefault -EnvMap $envMap -Name "TURBOQUANT_WORKSPACE_ROOT" -DefaultValue (Join-Path $SoftwareRoot "BuildTool\")
 }
 if (-not $VenvRoot) {
-    $VenvRoot = Join-Path $SoftwareRoot "S-SOCRATES\venvs\backend"
+    $VenvRoot = Get-SettingOrDefault -EnvMap $envMap -Name "BACKEND_VENV_ROOT" -DefaultValue (Join-Path $SoftwareRoot "BuildTool\venvs")
+}
+if (-not $ModelPath) {
+    $ModelPath = Get-SettingOrDefault -EnvMap $envMap -Name "LOCAL_GGUF_PATH"
+}
+if (-not $ModelPath) {
+    throw "Model path is required. Set LOCAL_GGUF_PATH in .env or pass -ModelPath."
+}
+if (-not $PSBoundParameters.ContainsKey("LocalPort")) {
+    $LocalPort = Get-SettingIntOrDefault -EnvMap $envMap -Name "LOCAL_LLM_PORT" -DefaultValue $LocalPort
+}
+if (-not $PSBoundParameters.ContainsKey("TurboQuantCtx")) {
+    $TurboQuantCtx = Get-SettingIntOrDefault -EnvMap $envMap -Name "LOCAL_CTX" -DefaultValue $TurboQuantCtx
+}
+if (-not $PSBoundParameters.ContainsKey("TurboQuantNgl")) {
+    $TurboQuantNgl = Get-SettingIntOrDefault -EnvMap $envMap -Name "LOCAL_NGL" -DefaultValue $TurboQuantNgl
+}
+if (-not $PSBoundParameters.ContainsKey("TurboQuantCacheType")) {
+    $TurboQuantCacheType = Get-SettingOrDefault -EnvMap $envMap -Name "LOCAL_CACHE_TYPE" -DefaultValue $TurboQuantCacheType
 }
 $WorkspaceRoot = [System.IO.Path]::GetFullPath($WorkspaceRoot)
 $VenvRoot = [System.IO.Path]::GetFullPath($VenvRoot)
@@ -255,7 +404,6 @@ if (-not (Test-Path $ModelPath)) {
 $RepoDir = Join-Path $WorkspaceRoot "llama-cpp-turboquant-cuda"
 $BuildDir = Join-Path $RepoDir "build-win-cuda"
 $VenvDir = $VenvRoot
-$EnvFile = Join-Path $BackendRoot ".env"
 $EnvExampleFile = Join-Path $BackendRoot ".env.example"
 
 Write-Step "Installing required toolchain"
@@ -268,7 +416,7 @@ Install-WingetPackage -Id "Microsoft.VisualStudio.2022.BuildTools" -Override "--
 if (-not $SkipCudaInstall) {
     $nvccPath = Find-NvccPath -SoftwareRoot $SoftwareRoot
     if (-not $nvccPath) {
-        Install-WingetPackage -Id "Nvidia.CUDA"
+        Install-CudaToolkit -Version $CudaVersion
         $nvccPath = Find-NvccPath -SoftwareRoot $SoftwareRoot
     }
     if (-not $nvccPath) {
@@ -282,10 +430,17 @@ if (-not $nvccPath) {
     throw "nvcc.exe was not found. Install CUDA Toolkit or omit -SkipCudaInstall."
 }
 
+$msvcClPath = Find-MsvcClPath -VsBuildToolsRoot $VsBuildToolsRoot
+if (-not $msvcClPath) {
+    throw "MSVC cl.exe (VS2022) was not found. Install Visual Studio Build Tools 2022 with Desktop development with C++."
+}
+
 $vsDevCmd = Find-VsDevCmd -VsBuildToolsRoot $VsBuildToolsRoot
 if (-not $vsDevCmd) {
-    throw "VsDevCmd.bat was not found. Install Visual Studio Build Tools with the C++ workload."
+    throw "VS2022 VsDevCmd.bat was not found. Install Visual Studio Build Tools 2022 with the Desktop development with C++ workload."
 }
+Write-Host "Using VS2022 developer environment: $vsDevCmd"
+Write-Host "Using VS2022 host compiler: $msvcClPath"
 
 Write-Step "Preparing TurboQuant workspace"
 New-Item -ItemType Directory -Path $WorkspaceRoot -Force | Out-Null
@@ -319,18 +474,12 @@ if ($ForceReconfigure -and (Test-Path $BuildDir)) {
 Write-Step "Building TurboQuant llama-server with CUDA"
 New-Item -ItemType Directory -Path $BuildDir -Force | Out-Null
 $configureCmd = @(
-    "set `"CUDACXX=$nvccPath`"",
     "cmake -S `"$RepoDir`" -B `"$BuildDir`" -G Ninja",
     "-DCMAKE_BUILD_TYPE=Release",
     "-DGGML_CUDA=ON",
-    "-DCMAKE_CUDA_ARCHITECTURES=$CudaArch",
-    "-DLLAMA_BUILD_TESTS=OFF",
-    "-DLLAMA_BUILD_EXAMPLES=OFF",
-    "-DLLAMA_BUILD_SERVER=ON",
-    "-DLLAMA_BUILD_COMMON=ON",
-    "-DLLAMA_OPENSSL=OFF",
-    "-DGGML_LLAMAFILE=OFF",
-    "-DGGML_CCACHE=OFF"
+    "-DCMAKE_CUDA_COMPILER=`"$nvccPath`"",
+    "-DCMAKE_CUDA_HOST_COMPILER=`"$msvcClPath`"",
+    "-DCMAKE_CUDA_ARCHITECTURES=$CudaArch"
 ) -join " "
 Run-CmdInVsDevShell -VsDevCmd $vsDevCmd -Command $configureCmd
 

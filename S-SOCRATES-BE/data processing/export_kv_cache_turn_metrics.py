@@ -272,12 +272,7 @@ def main() -> None:
         for i, run_start in enumerate(run_starts, start=1):
             print(f"{i}. {run_start}")
 
-    print("\nNhap moc thoi gian can lay (de trong de lay tat ca).")
-    print("Chap nhan 4 dinh dang:")
-    print("1) ===== START 2026-05-11 16:47:01 =====")
-    print("2) START 2026-05-11 16:47:01")
-    print("3) 2026-05-11 16:47:01")
-    print("4) 16:47:01")
+    print("\nNhap moc thoi gian can lay.")
     selector = input("Moc thoi gian: ").strip()
 
     selected_turn_rows = turn_rows
