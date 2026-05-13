@@ -189,6 +189,10 @@ Các biến quan trọng:
 GEMINI_API_KEY=your_gemini_key
 DEEPGRAM_API_KEY=your_deepgram_key
 
+# Backend deployment split:
+# - api: only Gemini API pipeline
+# - local: only TurboQuant local pipeline
+# - hybrid: both are available
 DEPLOYMENT_MODE=hybrid
 
 LOCAL_HOST=127.0.0.1
@@ -245,7 +249,7 @@ Chạy:
 ```cmd
 cd /d path\to\S-SOCRATES\S-SOCRATES-BE
 
-powershell -ExecutionPolicy Bypass -File .\scripts\setup_turboquant_windows.ps1 -ModelPath "path\to\model.gguf" -ForceReconfigure -SkipCudaInstall
+powershell -ExecutionPolicy Bypass -File .\scripts\setup_turboquant_windows.ps1 -ForceReconfigure -SkipCudaInstall
 ```
 
 Sau khi build xong, kiểm tra file:
