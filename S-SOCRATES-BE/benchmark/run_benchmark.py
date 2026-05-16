@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 S-SOCRATES benchmark runner
 
@@ -112,6 +111,16 @@ def percentile(values: list[float], p: float) -> float:
     return values[low] * (1 - frac) + values[high] * frac
 
 
+def csv_single_line(value: str) -> str:
+    """Keep generated text readable without letting newlines split CSV rows."""
+    return (
+        str(value or "")
+        .replace("\r\n", "\\n")
+        .replace("\r", "\\n")
+        .replace("\n", "\\n")
+    )
+
+
 def ensure_dirs() -> tuple[Path, Path]:
     root = Path(__file__).resolve().parent
     results = root / "results"
@@ -124,7 +133,7 @@ def ensure_dirs() -> tuple[Path, Path]:
 def write_summary(summary_path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         return
-    with summary_path.open("w", encoding="utf-8", newline="") as handle:
+    with summary_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
         writer.writeheader()
         writer.writerows(rows)
@@ -208,7 +217,7 @@ def main() -> int:
                     "repeat": repeat,
                     "question": case.question,
                     "question_chars": len(case.question),
-                    "response_text": text,
+                    "response_text": csv_single_line(text),
                     "response_chars": len(text),
                     "latency_ms": round(latency_ms, 2),
                     "http_status": status_code,
@@ -229,7 +238,7 @@ def main() -> int:
                 if args.sleep_ms > 0:
                     time.sleep(args.sleep_ms / 1000.0)
 
-    with raw_csv_path.open("w", encoding="utf-8", newline="") as handle:
+    with raw_csv_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(raw_rows[0].keys()))
         writer.writeheader()
         writer.writerows(raw_rows)

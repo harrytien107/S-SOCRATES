@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Optional chart helper for benchmark summary CSV.
 
