@@ -69,22 +69,48 @@ function getApiBase() {
     return window.location.origin.replace(/\/+$/, '');
 }
 
-function getLocalRuntimeSummary(runtime) {
-    if (!runtime) return 'TurboQuant: checking runtime status...';
+function getActiveLocalRuntime(runtime) {
+    if (!runtime) return null;
+    const variants = runtime.variants || {};
+    const turbo = variants.turboquant || runtime;
+    const baseline = variants.baseline || null;
 
-    const phase = runtime.phase || 'unknown';
-    const detail = runtime.detail || '';
+    if (baseline?.ready && !turbo?.ready) {
+        return { ...baseline, ui_engine: 'baseline', ui_mode: 'ai_baseline', ui_label: 'AI (BASELINE)' };
+    }
+    if (turbo?.ready) {
+        return { ...turbo, ui_engine: 'turboquant', ui_mode: 'ai_turbo', ui_label: 'AI (TURBOQUANT)' };
+    }
+    if (baseline) {
+        return { ...baseline, ui_engine: 'baseline', ui_mode: 'ai_baseline', ui_label: 'AI (BASELINE)' };
+    }
+    return { ...turbo, ui_engine: 'turboquant', ui_mode: 'ai_turbo', ui_label: 'AI (TURBOQUANT)' };
+}
+
+function getLocalRuntimeDisplayName(runtime) {
+    const backend = runtime?.backend || runtime?.ui_engine || '';
+    if (backend === 'local_baseline' || backend === 'baseline') return 'Local Baseline';
+    return 'TurboQuant';
+}
+
+function getLocalRuntimeSummary(runtime) {
+    const activeRuntime = getActiveLocalRuntime(runtime);
+    const runtimeName = getLocalRuntimeDisplayName(activeRuntime);
+    if (!activeRuntime) return `${runtimeName}: checking runtime status...`;
+
+    const phase = activeRuntime.phase || 'unknown';
+    const detail = activeRuntime.detail || '';
     const prefixMap = {
-        ready: '🟢 TurboQuant ready',
-        cold: '🟡 TurboQuant online, context not restored yet',
-        starting: '🟡 TurboQuant starting',
-        warming: '🟠 TurboQuant restoring context',
-        generating: '🟠 TurboQuant generating',
-        offline: '🔴 TurboQuant offline',
-        stopped: '⚪ TurboQuant stopped',
-        error: '🔴 TurboQuant error',
+        ready: `🟢 ${runtimeName} ready`,
+        cold: `🟡 ${runtimeName} online, context not restored yet`,
+        starting: `🟡 ${runtimeName} starting`,
+        warming: `🟠 ${runtimeName} restoring context`,
+        generating: `🟠 ${runtimeName} generating`,
+        offline: `🔴 ${runtimeName} offline`,
+        stopped: `⚪ ${runtimeName} stopped`,
+        error: `🔴 ${runtimeName} error`,
     };
-    const prefix = prefixMap[phase] || 'ℹ️ TurboQuant';
+    const prefix = prefixMap[phase] || `ℹ️ ${runtimeName}`;
     return detail ? `${prefix}: ${detail}` : prefix;
 }
 
@@ -94,11 +120,12 @@ function applyLocalRuntimeStatus(runtime) {
     const localAiBtn = document.getElementById('btn-local-ai');
     if (!statusEl || !localAiBtn) return;
 
+    const activeRuntime = getActiveLocalRuntime(runtime);
     statusEl.innerText = getLocalRuntimeSummary(runtime);
 
-    const phase = runtime?.phase || 'offline';
+    const phase = activeRuntime?.phase || 'offline';
     const busy = ['starting', 'warming', 'generating'].includes(phase);
-    const unavailable = ['offline', 'stopped', 'error'].includes(phase) || runtime?.ready === false;
+    const unavailable = ['offline', 'stopped', 'error'].includes(phase) || activeRuntime?.ready === false;
 
     statusEl.style.color =
         phase === 'ready' ? 'var(--cyan)'
@@ -107,14 +134,15 @@ function applyLocalRuntimeStatus(runtime) {
         : 'var(--danger)';
 
     localAiBtn.disabled = busy || unavailable;
-    localAiBtn.title = runtime?.detail || 'TurboQuant is not ready yet';
+    localAiBtn.title = activeRuntime?.detail || 'Local AI is not ready yet';
+    localAiBtn.innerHTML = `<span>⚡ ${activeRuntime?.ui_label || 'AI (LOCAL)'}</span>`;
 }
 
 function applyDeploymentMode(configPayload) {
     deploymentMode = configPayload?.deployment_mode || 'hybrid';
     supportedModelModes = configPayload?.supported_model_modes || [];
 
-    const localEnabled = supportedModelModes.some(item => item.code === 'local');
+    const localEnabled = supportedModelModes.some(item => ['local', 'ai_turbo', 'ai_baseline', 'baseline'].includes(item.code));
     const geminiEnabled = supportedModelModes.some(item => item.code === 'gemini');
     const localBtn = document.getElementById('btn-local-ai');
     const geminiBtn = document.getElementById('btn-gemini-ai');
@@ -895,19 +923,21 @@ function updateSendButton() {
 
 async function useAI() {
     const base = getApiBase();
-    if (!supportedModelModes.some(item => item.code === 'local')) {
+    if (!supportedModelModes.some(item => ['local', 'ai_turbo', 'ai_baseline', 'baseline'].includes(item.code))) {
         statusMessage("Local AI is disabled in this deployment mode.", "error");
         return;
     }
     const aiInput = getAiInputText();
-    const phase = localRuntimeStatus?.phase || 'offline';
+    const activeRuntime = getActiveLocalRuntime(localRuntimeStatus);
+    const phase = activeRuntime?.phase || 'offline';
+    const runtimeName = getLocalRuntimeDisplayName(activeRuntime);
     const unavailable =
         ['starting', 'warming', 'generating', 'offline', 'stopped', 'error'].includes(phase) ||
-        localRuntimeStatus?.ready === false;
+        activeRuntime?.ready === false;
 
     if (unavailable) {
-        statusMessage(localRuntimeStatus?.detail || 'TurboQuant is not ready yet.', "error");
-        addLog(`⚠️ TurboQuant is not ready: ${localRuntimeStatus?.detail || phase}`);
+        statusMessage(activeRuntime?.detail || `${runtimeName} is not ready yet.`, "error");
+        addLog(`⚠️ ${runtimeName} is not ready: ${activeRuntime?.detail || phase}`);
         return;
     }
     if (!aiInput) {
@@ -931,7 +961,7 @@ async function useAI() {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                mode: 'ai',
+                mode: activeRuntime?.ui_mode || 'ai_turbo',
                 transcript: aiInput
             })
         });
@@ -942,10 +972,10 @@ async function useAI() {
         syncExpandedPreview();
         setEmotion(result.emotion, null, false);
         updateSendButton();
-        addLog("AI response generated.");
+        addLog(`${runtimeName} response generated.`);
         await syncLocalRuntimeStatus();
     } catch (err) {
-        addLog("AI Failed.");
+        addLog(`${runtimeName} Failed.`);
         statusMessage("AI Generation Failed", "error");
         await syncLocalRuntimeStatus();
     } finally {
